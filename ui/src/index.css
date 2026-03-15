@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --color-matrix-green: #00ff41;
+  --color-matrix-dark: #0d0d0d;
+  --color-matrix-panel: #1a1a1a;
+  
+  --font-mono: 'Space Mono', 'Cascadia Code', 'Fira Code', monospace;
+}
+
+body {
+  background-color: var(--color-matrix-dark);
+  color: var(--color-matrix-green);
+  font-family: var(--font-mono);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar for matrix aesthetic */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-matrix-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-matrix-green);
+}

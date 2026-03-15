@@ -1,0 +1,90 @@
+[project]
+name = "my-local-agent"
+version = "0.1.0"
+description = "Local-first AI agent with Ollama, Qdrant, and multi-channel support"
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    # Core
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+
+    # LLM Integration
+    "litellm>=1.30.0",
+    "ollama>=0.1.0",
+
+    # Memory & Embeddings
+    "qdrant-client>=1.7.0",
+    "sentence-transformers>=2.2.0",
+
+    # Channels
+    "python-telegram-bot[job-queue]>=20.0",
+    "discord.py>=2.3.0",
+    "rich>=13.0.0",
+    "prompt-toolkit>=3.0.0",
+
+    # Automation
+    "apscheduler>=3.10.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.1.0",
+    "google-auth-oauthlib>=1.1.0",
+
+    # API
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "python-multipart>=0.0.6",
+
+    # Tools & MCP
+    "mcp>=0.1.0",
+
+    # Utilities
+    "aiofiles>=23.0.0",
+    "aiosqlite>=0.19.0",
+    "httpx>=0.25.0",
+    "pydantic-yaml>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "memory", "channels", "heartbeat", "tools", "skills", "api"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

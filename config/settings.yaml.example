@@ -1,0 +1,198 @@
+# ================================
+# My Local Agent - Configuration
+# ================================
+
+# LLM Configuration
+llm:
+  primary: "ollama/qwen2.5:32b"
+  fallback:
+    - "anthropic/claude-3-opus-20240229"
+    - "openai/gpt-4-turbo"
+  temperature: 0.7
+  max_tokens: 4096
+  context_window: 128000
+
+  # Model routing for specific tasks
+  routing:
+    general: "ollama/qwen2.5:32b"
+    coding: "ollama/qwen2.5:32b"
+    complex_reasoning: "anthropic/claude-3-opus-20240229"  # Use cloud for complex tasks
+    embeddings: "local"  # Always use local embeddings
+
+# Memory Configuration
+memory:
+  qdrant:
+    host: "${QDRANT_HOST:localhost}"
+    port: ${QDRANT_PORT:6333}
+    collection: "agent_memory"
+    grpc_port: 6334
+    prefer_grpc: false
+    timeout: 30
+
+  embedding:
+    model: "all-mpnet-base-v2"  # 768 dimensions
+    device: "cuda"  # Use GPU (RTX 5090)
+    batch_size: 32
+
+  search:
+    top_k: 6
+    min_score: 0.35
+    hybrid_weights:
+      vector: 0.7
+      keyword: 0.3
+    candidate_multiplier: 4
+
+  chunking:
+    chunk_size: 400  # tokens
+    overlap: 80      # tokens
+
+  files:
+    soul: "data/SOUL.md"
+    user: "data/USER.md"
+    memory: "data/MEMORY.md"
+    daily_logs: "data/memory/"
+    long_term: "data/long_memory/"
+
+# Heartbeat Configuration
+heartbeat:
+  enabled: true
+  interval_minutes: 30
+  active_hours:
+    start: "08:00"
+    end: "22:00"
+    timezone: "America/New_York"
+
+  notifications:
+    channel: "telegram"  # primary notification channel
+    suppress_ok: true    # don't notify if nothing to report
+    deduplicate_hours: 24
+
+  integrations:
+    email:
+      enabled: true
+      check_interval_hours: 2
+      filters:
+        - "is:unread"
+        - "is:important"
+      max_results: 10
+
+    calendar:
+      enabled: true
+      check_interval_hours: 1
+      lookahead_hours: 2  # warn about events in next 2 hours
+
+    custom:
+      enabled: false
+      # Add your custom integrations here
+
+# Channel Configuration
+channels:
+  telegram:
+    enabled: true
+    token: "${TELEGRAM_BOT_TOKEN}"
+    allowed_users:
+      - ${TELEGRAM_USER_ID}
+    primary: true
+    session_scope: "per_user"  # or "global"
+    streaming: false
+
+  discord:
+    enabled: true
+    token: "${DISCORD_BOT_TOKEN}"
+    allowed_channels:
+      - ${DISCORD_CHANNEL_ID}
+    session_scope: "per_channel"
+    streaming: false
+
+  terminal:
+    enabled: true
+    rich_formatting: true
+    history_file: ".agent_history"
+    prompt: "You> "
+
+# Backup Configuration
+backup:
+  enabled: true
+  interval_hours: 6
+  retain_days: 30
+
+  destinations:
+    gdrive:
+      enabled: true
+      path: "ai-agent-backups/"
+      encrypted: true
+      gpg_recipient: "${GPG_RECIPIENT}"
+
+    nfs:
+      enabled: false
+      path: "${NFS_MOUNT:}"
+      realtime: true
+      rsync_args: ["-avz", "--delete"]
+
+    obsidian:
+      enabled: false
+      vault_path: "~/Documents/Obsidian/AI-Agent/"
+      sync_memory: true
+      sync_daily_logs: true
+
+# API Configuration
+api:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8000
+  token: "${API_TOKEN}"
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+  websocket:
+    enabled: true
+    heartbeat_interval: 30
+
+# Skills Configuration
+skills:
+  local_only: true  # never publish to marketplace
+  auto_discovery: true
+  watch: true       # hot reload on changes
+
+  directories:
+    - "skills/local"
+    - "~/.agent-skills"
+
+  auto_generation:
+    enabled: true
+    model: "anthropic/claude-3-opus-20240229"  # use best model for skill generation
+
+# MCP Configuration
+mcp:
+  enabled: true
+  servers_config: "config/mcp_servers.yaml"
+  timeout: 30
+  auto_connect: true
+
+# Tools Configuration
+tools:
+  sandbox:
+    enabled: false  # local-first, no sandbox needed
+
+  approval:
+    shell_commands: "on_first"  # "always", "on_first", "never"
+    file_operations: "never"
+    network_requests: "never"
+
+  allowed_tools:
+    - "memory_search"
+    - "memory_get"
+    - "read_file"
+    - "write_file"
+    - "shell_exec"
+    - "web_search"
+    - "web_fetch"
+    # Add more as needed
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/agent.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
