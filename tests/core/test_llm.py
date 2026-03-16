@@ -13,7 +13,10 @@ def event_bus() -> EventBus:
     return EventBus()
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.delenv("PRIMARY_MODEL", raising=False)
+    monkeypatch.delenv("FALLBACK_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
     return Settings(
         primary_model="ollama/llama3",
         fallback_model="gpt-4-turbo"
@@ -39,11 +42,11 @@ async def test_llm_gateway_success(llm_gateway: LLMGateway, event_bus: EventBus)
         assert response.content == "Hi there!"
         assert response.tool_calls is None
 
-        mock_acompletion.assert_called_once_with(
-            model="ollama/llama3",
-            messages=messages,
-            tools=None
-        )
+        # We want to check that it was called with the right model and messages, but we don't care about api_base if it's set
+        kwargs = mock_acompletion.call_args.kwargs
+        assert kwargs["model"] == "ollama/llama3"
+        assert kwargs["messages"] == messages
+        assert kwargs["tools"] is None
 
     # Check telemetry
     assert event_bus._queue.qsize() == 2
@@ -79,16 +82,16 @@ async def test_llm_gateway_fallback(llm_gateway: LLMGateway, event_bus: EventBus
         assert response.content == "Fallback response"
 
         assert mock_acompletion.call_count == 2
-        mock_acompletion.assert_any_call(
-            model="ollama/llama3",
-            messages=messages,
-            tools=None
-        )
-        mock_acompletion.assert_any_call(
-            model="gpt-4-turbo",
-            messages=messages,
-            tools=None
-        )
+        
+        call_1_kwargs = mock_acompletion.call_args_list[0].kwargs
+        assert call_1_kwargs["model"] == "ollama/llama3"
+        assert call_1_kwargs["messages"] == messages
+        assert call_1_kwargs["tools"] is None
+        
+        call_2_kwargs = mock_acompletion.call_args_list[1].kwargs
+        assert call_2_kwargs["model"] == "gpt-4-turbo"
+        assert call_2_kwargs["messages"] == messages
+        assert call_2_kwargs["tools"] is None
 
     # Check telemetry
     assert event_bus._queue.qsize() == 3

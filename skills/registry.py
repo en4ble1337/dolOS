@@ -12,10 +12,17 @@ class SkillRegistry:
         self._skills: dict[str, Callable[..., Any]] = {}
         self._schemas: dict[str, dict[str, Any]] = {}
 
-    def register(self, name: str, description: str, func: Callable[..., Any]) -> None:
+    def register(self, name: str, description: str, func: Callable[..., Any], input_schema: dict[str, Any] | None = None) -> None:
         """Register a function as a skill and generate its OpenAI JSON schema."""
         self._skills[name] = func
-        self._schemas[name] = self._generate_schema(name, description, func)
+        if input_schema:
+            self._schemas[name] = {
+                "name": name,
+                "description": description,
+                "parameters": input_schema
+            }
+        else:
+            self._schemas[name] = self._generate_schema(name, description, func)
 
     def get_skill(self, name: str) -> Callable[..., Any]:
         """Retrieve a registered skill function by name."""

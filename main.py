@@ -9,6 +9,8 @@ from api.routes.chat import chat_router
 from api.routes.observability import router as obs_router
 from api.routes.observability import set_collector
 from channels.terminal import TerminalChannel
+from channels.telegram_channel import TelegramChannel
+from channels.discord_channel import DiscordChannel
 from core.agent import Agent
 from core.config import Settings
 from core.heartbeat import HeartbeatSystem
@@ -89,7 +91,19 @@ async def main() -> None:
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
     
-    # Wait for the API to boot before starting the terminal
+    background_tasks = [server_task]
+
+    # Start Telegram if configured
+    if settings.telegram_bot_token:
+        telegram_channel = TelegramChannel(agent, event_bus, settings.telegram_bot_token.get_secret_value())
+        background_tasks.append(asyncio.create_task(telegram_channel.start()))
+
+    # Start Discord if configured
+    if settings.discord_bot_token:
+        discord_channel = DiscordChannel(agent, event_bus, settings.discord_bot_token.get_secret_value())
+        background_tasks.append(asyncio.create_task(discord_channel.start()))
+    
+    # Wait for the APIs to boot before starting the terminal
     await asyncio.sleep(2.0)
     
     # Start terminal UI - this will block until the user types exit
@@ -100,7 +114,17 @@ async def main() -> None:
     finally:
         logger.info("Terminal session exited. System shutting down...")
         server.should_exit = True
-        await asyncio.wait([server_task])
+        
+        # Cancel other background tasks (Discord/Telegram)
+        for t in background_tasks:
+            if t is not server_task:
+                t.cancel()
+                
+        # Wait for the server to cleanly shutdown its lifespan, but allow timeout
+        try:
+            await asyncio.wait([server_task], timeout=5.0)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     try:

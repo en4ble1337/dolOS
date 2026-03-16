@@ -7,12 +7,12 @@ Expand the agent's capabilities by implementing the actual tools defined in the 
 We built a robust execution sandbox in Directive 008, and the backend orchestrator supports tool calling natively via Ollama/LiteLLM. Now the agent needs some actual arms and legs!
 
 ## Acceptance Criteria
-- [ ] Implement a **File System Skill** permitting safe reading/writing of localized directories for the agent to use.
-- [ ] Implement a **System Command Skill** (subprocess) carefully sandboxed.
-- [ ] Add the `mcp-core` library dependencies, and build a generic Python MCP Client wrapper under `tools/mcp_client.py`.
-- [ ] Bind standard MCP servers (like the official file system server or sqlite server) into our `SkillRegistry` dynamically, mapping MCP interfaces tightly to our `SkillExecutor` logic.
-- [ ] Emit robust `TOOL_INVOKE`, `TOOL_ERROR`, and `TOOL_COMPLETE` telemetry covering MCP queries.
-- [ ] Test the integration by having the LLM query a simulated filesystem via the agent terminal interface.
+- [x] Implement a **File System Skill** permitting safe reading/writing of localized directories for the agent to use.
+- [x] Implement a **System Command Skill** (subprocess) carefully sandboxed.
+- [x] Add the `mcp-core` library dependencies, and build a generic Python MCP Client wrapper under `tools/mcp_client.py`.
+- [x] Bind standard MCP servers (like the official file system server or sqlite server) into our `SkillRegistry` dynamically, mapping MCP interfaces tightly to our `SkillExecutor` logic.
+- [x] Emit robust `TOOL_INVOKE`, `TOOL_ERROR`, and `TOOL_COMPLETE` telemetry covering MCP queries.
+- [x] Test the integration by having the LLM query a simulated filesystem via the agent terminal interface.
 
 ## Methodology
 - **TDD Iron Law:** NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST.

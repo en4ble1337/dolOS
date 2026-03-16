@@ -10,5 +10,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[SecretStr] = Field(default=None)
     anthropic_api_key: Optional[SecretStr] = Field(default=None)
     ollama_api_base: Optional[str] = Field(default=None)
+    telegram_bot_token: Optional[SecretStr] = Field(default=None)
+    discord_bot_token: Optional[SecretStr] = Field(default=None)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

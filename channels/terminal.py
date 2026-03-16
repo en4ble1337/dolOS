@@ -5,19 +5,12 @@ from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 
+from channels import Channel
 from core.agent import Agent
 from core.telemetry import Event, EventBus, EventType
 
 
-class Channel(Protocol):
-    """Protocol defining the interface for all communication channels."""
-
-    async def start(self) -> None:
-        """Starts the channel's main message-processing loop."""
-        ...
-
-
-class TerminalChannel:
+class TerminalChannel(Channel):
     """A command-line interface for chatting with the agent."""
 
     def __init__(

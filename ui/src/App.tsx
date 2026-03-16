@@ -1,7 +1,9 @@
 import { useTelemetry } from './lib/telemetry';
-import { Activity, Webhook, Box, Zap, RefreshCw, Cpu } from 'lucide-react';
+import { Activity, Webhook, Box, Zap, RefreshCw, Cpu, HeartPulse } from 'lucide-react';
 import { TokenChart } from './components/TokenChart';
 import { Waterfall } from './components/Waterfall';
+import { MemoryHealth } from './components/MemoryHealth';
+import { HeartbeatGrid } from './components/HeartbeatGrid';
 
 function App() {
   const { events, isConnected, clearEvents } = useTelemetry();
@@ -84,14 +86,14 @@ function App() {
           </div>
           
           {/* Metrics Block */}
-          <div className="h-1/3 grid grid-cols-2 gap-6">
+          <div className="h-[40%] grid grid-cols-3 gap-6">
             <div className="border border-matrix-green/30 rounded-lg bg-[#0a0a0a] p-4 relative overflow-hidden">
                <div className="absolute top-0 right-0 w-32 h-32 bg-matrix-green/5 blur-3xl" />
                <div className="flex items-center gap-2 mb-4 opacity-80 relative z-10">
                  <Zap className="w-4 h-4 text-yellow-400" />
                  <h3 className="uppercase text-xs font-bold">LLM Token Velocity</h3>
                </div>
-               <div className="h-full flex flex-col items-center justify-center text-sm relative z-10 p-2">
+               <div className="h-[calc(100%-32px)] flex flex-col items-center justify-center text-sm relative z-10 p-2">
                  <TokenChart events={events} />
                </div>
             </div>
@@ -100,8 +102,17 @@ function App() {
                  <Box className="w-4 h-4 text-blue-400" />
                  <h3 className="uppercase text-xs font-bold">Memory Health</h3>
                </div>
-               <div className="h-full flex flex-col items-center justify-center opacity-60 text-sm relative z-10">
-                 [METRICS BLOCK]
+               <div className="h-[calc(100%-32px)] flex flex-col items-center justify-center text-sm relative z-10">
+                 <MemoryHealth events={events} />
+               </div>
+            </div>
+            <div className="border border-matrix-green/30 rounded-lg bg-[#0a0a0a] p-4 relative overflow-hidden">
+               <div className="flex items-center gap-2 mb-4 opacity-80 relative z-10">
+                 <HeartPulse className="w-4 h-4 text-red-400" />
+                 <h3 className="uppercase text-xs font-bold">Heartbeat Status</h3>
+               </div>
+               <div className="h-[calc(100%-32px)] flex flex-col items-center justify-center text-sm relative z-10">
+                 <HeartbeatGrid events={events} />
                </div>
             </div>
           </div>
