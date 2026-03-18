@@ -160,8 +160,12 @@ class Agent:
                 {"role": "user", "content": message},
             ]
 
+            # Only pass native tools for non-Ollama models.
+            # Ollama models use ReAct XML fallback — passing tools= breaks them
+            # by injecting a conflicting format that causes refusals.
             tools = None
-            if self.skill_executor:
+            model_name = self.llm.settings.primary_model
+            if self.skill_executor and not model_name.startswith("ollama/"):
                 schemas = self.skill_executor.registry.get_all_schemas()
                 tools = [{"type": "function", "function": s} for s in schemas] or None
 
