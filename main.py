@@ -34,6 +34,7 @@ from heartbeat.integrations.deadman_switch import DeadManSwitch
 import skills.local.filesystem  # noqa: F401 — registers read_file, write_file
 import skills.local.system  # noqa: F401 — registers run_command, run_code
 import skills.local.meta  # noqa: F401 — registers create_skill
+import skills.local.memory as _memory_skill  # registers search_memory
 import skills.local.generated  # noqa: F401 — auto-loads agent-generated skills
 from skills.executor import SkillExecutor
 from skills.registry import _default_registry as registry
@@ -54,6 +55,7 @@ llm = LLMGateway(settings=settings, event_bus=event_bus)
 logger.info("Initializing Memory Manager & Downloading Embedding Models (this may take ~1 minute on first run)...")
 vector_store = VectorStore(location=settings.data_dir)
 memory = MemoryManager(vector_store=vector_store, event_bus=event_bus)
+_memory_skill.set_memory_manager(memory)
 executor = SkillExecutor(registry=registry, event_bus=event_bus)
 semantic_extractor = SemanticExtractor(
     llm=llm,
