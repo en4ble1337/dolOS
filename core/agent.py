@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
 _DEFAULT_LESSONS_PATH = "data/LESSONS.md"
 
 logger = logging.getLogger(__name__)
+
+_REACT_TAG_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+
+
+def _parse_react_tool_calls(text: str) -> List[tuple]:
+    """Parse <tool_call>{"name": ..., "arguments": {...}}</tool_call> tags from model output."""
+    calls = []
+    for match in _REACT_TAG_RE.finditer(text):
+        try:
+            payload = json.loads(match.group(1).strip())
+            name = payload.get("name", "")
+            args = payload.get("arguments", {})
+            if name:
+                calls.append((name, args))
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning(f"[REACT] Failed to parse tool_call: {match.group(1)[:100]}")
+    return calls
 
 
 class Agent:
@@ -92,24 +110,31 @@ class Agent:
                         f"<lessons_learned>\n{raw_lessons}\n</lessons_learned>\n\n"
                     )
 
-            # Build tool list for system prompt
-            skill_names = []
+            # Build tool list for system prompt (ReAct XML format — works with any model)
+            tools_block = ""
             if self.skill_executor:
                 schemas = self.skill_executor.registry.get_all_schemas()
-                skill_names = [s["name"] for s in schemas]
-
-            tools_block = ""
-            if skill_names:
-                tools_block = (
-                    "You are an autonomous agent with the following tools available. "
-                    "You MUST call these tools when the user asks you to perform actions — do NOT refuse or say you cannot:\n"
-                    + "\n".join(f"  - {name}" for name in skill_names)
-                    + "\n\n"
-                    "TOOL USAGE RULES:\n"
-                    "- ALWAYS use run_command to execute shell commands when asked (e.g. 'ip a', 'ls', 'mkdir').\n"
-                    "- ALWAYS use read_file / write_file for file operations.\n"
-                    "- Never claim you 'cannot' run commands — you can, via these tools.\n\n"
-                )
+                if schemas:
+                    tool_lines = []
+                    for s in schemas:
+                        params = ", ".join(
+                            f"{k}: {v.get('type', 'str')}"
+                            for k, v in s.get("parameters", {}).get("properties", {}).items()
+                        )
+                        tool_lines.append(f"  - {s['name']}({params}) — {s.get('description', '')}")
+                    tools_block = (
+                        "You have the following tools. To use a tool output EXACTLY this XML on its own line:\n"
+                        "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"arg\": \"value\"}}</tool_call>\n\n"
+                        "Available tools:\n"
+                        + "\n".join(tool_lines)
+                        + "\n\n"
+                        "RULES:\n"
+                        "- ALWAYS use run_command for shell commands (ip a, df -h, mkdir, etc.).\n"
+                        "- ALWAYS use read_file/write_file for file operations.\n"
+                        "- ALWAYS use run_code to execute Python when needed.\n"
+                        "- Output ONE <tool_call> per action. Wait for the result before the next.\n"
+                        "- Never say you cannot run commands — use the tools above.\n\n"
+                    )
 
             system_prompt = (
                 "You are the following AI Agent. Below is your core identity, rules, and personality defined in your SOUL.md file:\n\n"
@@ -137,60 +162,51 @@ class Agent:
 
             tools = None
             if self.skill_executor:
-                tools = [{"type": "function", "function": schema} for schema in self.skill_executor.registry.get_all_schemas()]
-                if not tools:
-                    tools = None
+                schemas = self.skill_executor.registry.get_all_schemas()
+                tools = [{"type": "function", "function": s} for s in schemas] or None
 
             # 5. Generate reply (Loop for tool calls)
             MAX_LOOPS = 5
             for _ in range(MAX_LOOPS):
                 response = await self.llm.generate(messages=messages, trace_id=trace_id, tools=tools)
-                logger.info(f"[TOOL_DEBUG] tool_calls={bool(response.tool_calls)} | preview={str(response.content)[:120]!r}")
+                content = response.content or ""
 
+                # --- Native function calling path ---
                 if response.tool_calls:
-                    # Append the assistant's tool call message
-                    assistant_msg: Dict[str, Any] = {"role": "assistant", "content": response.content or "", "tool_calls": response.tool_calls}
-                    tool_calls_dict = []
+                    messages.append({
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": [
+                            tc.model_dump() if hasattr(tc, "model_dump") else
+                            tc.dict() if hasattr(tc, "dict") else
+                            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                            for tc in response.tool_calls
+                        ],
+                    })
                     for tc in response.tool_calls:
-                        if hasattr(tc, "model_dump"):
-                            tool_calls_dict.append(tc.model_dump())
-                        elif hasattr(tc, "dict"):
-                            tool_calls_dict.append(tc.dict())
-                        else:
-                            if isinstance(tc, dict):
-                                tool_calls_dict.append(tc)
-                            else:
-                                tool_calls_dict.append({
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.function.name,
-                                        "arguments": tc.function.arguments
-                                    }
-                                })
-
-                    assistant_msg["tool_calls"] = tool_calls_dict
-                    messages.append(assistant_msg)
-
-                    for tool_call in response.tool_calls:
-                        function_name = tool_call.function.name
+                        fn_name = tc.function.name
                         try:
-                            arguments = json.loads(tool_call.function.arguments)
+                            args = json.loads(tc.function.arguments)
                         except json.JSONDecodeError:
-                            arguments = {}
+                            args = {}
+                        result = await self.skill_executor.execute(fn_name, args, trace_id) if self.skill_executor else "Error: SkillExecutor not configured."
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "name": fn_name, "content": str(result)})
+                    continue  # loop back with tool results
 
-                        if self.skill_executor:
-                            result = await self.skill_executor.execute(function_name, arguments, trace_id)
-                        else:
-                            result = "Error: SkillExecutor not configured."
+                # --- ReAct XML fallback (for models that don't support native tool calling) ---
+                react_calls = _parse_react_tool_calls(content)
+                if react_calls and self.skill_executor:
+                    logger.info(f"[REACT] parsed {len(react_calls)} tool call(s) from text")
+                    messages.append({"role": "assistant", "content": content})
+                    tool_results = []
+                    for fn_name, args in react_calls:
+                        result = await self.skill_executor.execute(fn_name, args, trace_id)
+                        tool_results.append(f"<tool_result name=\"{fn_name}\">{result}</tool_result>")
+                        logger.info(f"[REACT] {fn_name}({args}) → {str(result)[:120]}")
+                    messages.append({"role": "user", "content": "\n".join(tool_results) + "\nNow give the final answer to the user based on the above results."})
+                    continue  # loop back so model can compose final answer
 
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": function_name,
-                            "content": str(result),
-                        })
-                    # Loop back to generate again with the tool result
+                # --- No tool calls — final response ---
                 else:
                     content = response.content or ""
 
