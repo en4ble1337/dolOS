@@ -211,9 +211,16 @@ class Agent:
                 tools = [{"type": "function", "function": s} for s in schemas] or None
 
             # 5. Generate reply (Loop for tool calls)
-            MAX_LOOPS = 5
-            for _ in range(MAX_LOOPS):
-                response = await self.llm.generate(messages=messages, trace_id=trace_id, tools=tools)
+            MAX_LOOPS = 10
+            for loop_idx in range(MAX_LOOPS):
+                # On the final iteration force a plain-text response — no more tool calls.
+                # This prevents qwen3's thinking mode from looping indefinitely.
+                final_loop = (loop_idx == MAX_LOOPS - 1)
+                loop_tools = None if final_loop else tools
+                if final_loop and messages[-1].get("role") != "user":
+                    messages.append({"role": "user", "content": "You have all the information you need. Give your final answer to the user now. Do not call any more tools."})
+
+                response = await self.llm.generate(messages=messages, trace_id=trace_id, tools=loop_tools)
                 content = response.content or ""
                 logger.info(f"[LLM_RAW] tool_calls={bool(response.tool_calls)} | has_tool_tag={'<tool_call>' in content} | content={content[:300]!r}")
 
