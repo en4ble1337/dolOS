@@ -23,6 +23,19 @@ logger = logging.getLogger(__name__)
 _REACT_TAG_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 _THINK_TAG_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
+# Ollama models known to support native OpenAI-style function calling.
+# These are safe to pass tools= to; older/smaller models should use ReAct XML fallback.
+_OLLAMA_TOOL_CAPABLE = frozenset([
+    "qwen3", "qwen2.5", "qwq", "mistral", "llama3.1", "llama3.2", "llama3.3", "gemma3",
+])
+
+
+def _supports_native_tools(model_name: str) -> bool:
+    """Return True if the model supports native OpenAI-style function calling."""
+    if not model_name.startswith("ollama/"):
+        return True  # Non-Ollama models (Claude, GPT-4, etc.) support it
+    return any(cap in model_name.lower() for cap in _OLLAMA_TOOL_CAPABLE)
+
 
 def _parse_react_tool_calls(text: str) -> List[tuple]:
     """Parse <tool_call> tags from model output, including inside <think> blocks (qwen3 thinking mode)."""
@@ -114,32 +127,54 @@ class Agent:
                         f"<lessons_learned>\n{raw_lessons}\n</lessons_learned>\n\n"
                     )
 
-            # Build tool list for system prompt (ReAct XML format — works with any model)
+            # Determine model type FIRST — affects how tools are described in the system prompt
+            model_name = self.llm.settings.primary_model
+            use_native_tools = _supports_native_tools(model_name)
+
+            # Build tool list for system prompt.
+            # Native-tool models (qwen3, etc.): only a brief reminder — tools are defined via the
+            # API `tools=` parameter. Including XML format here CONFLICTS with native tool calling
+            # and causes the model to refuse.
+            # ReAct models: full XML format with example so the model knows the exact syntax.
             tools_block = ""
             if self.skill_executor:
                 schemas = self.skill_executor.registry.get_all_schemas()
                 if schemas:
-                    tool_lines = []
-                    for s in schemas:
-                        params = ", ".join(
-                            f"{k}: {v.get('type', 'str')}"
-                            for k, v in s.get("parameters", {}).get("properties", {}).items()
+                    if use_native_tools:
+                        # For native function-calling models: no XML format in system prompt.
+                        # The tool definitions come from the API tools= parameter.
+                        tools_block = (
+                            "You have tools available (run_command, read_file, write_file, run_code, etc.).\n"
+                            "RULES:\n"
+                            "- ALWAYS call run_command to execute shell commands — never tell the user to run them manually.\n"
+                            "- ALWAYS call read_file/write_file for file operations.\n"
+                            "- NEVER say you cannot run commands — you have the tools. Use them.\n\n"
                         )
-                        tool_lines.append(f"  - {s['name']}({params}) — {s.get('description', '')}")
-                    tools_block = (
-                        "You have the following tools. To use a tool output EXACTLY this XML on its own line:\n"
-                        "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"arg\": \"value\"}}</tool_call>\n\n"
-                        "Available tools:\n"
-                        + "\n".join(tool_lines)
-                        + "\n\n"
-                        "RULES:\n"
-                        "- You ARE running on real hardware with real shell access. You CAN execute commands.\n"
-                        "- ALWAYS use run_command for shell commands (ip a, df -h, ls, mkdir, cat, etc.).\n"
-                        "- ALWAYS use read_file/write_file for file operations.\n"
-                        "- ALWAYS use run_code to execute Python when needed.\n"
-                        "- Output ONE <tool_call> per action. Wait for the result before the next.\n"
-                        "- NEVER say you cannot run commands or don't have access — you do. Use the tools.\n\n"
-                    )
+                    else:
+                        # For ReAct/XML fallback models: full format with example
+                        tool_lines = []
+                        for s in schemas:
+                            params = ", ".join(
+                                f"{k}: {v.get('type', 'str')}"
+                                for k, v in s.get("parameters", {}).get("properties", {}).items()
+                            )
+                            tool_lines.append(f"  - {s['name']}({params}) — {s.get('description', '')}")
+                        tools_block = (
+                            "You have the following tools. To use a tool output EXACTLY this XML on its own line:\n"
+                            "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"arg\": \"value\"}}</tool_call>\n\n"
+                            "Example — run the command 'ip a':\n"
+                            "<tool_call>{\"name\": \"run_command\", \"arguments\": {\"command\": \"ip a\"}}</tool_call>\n\n"
+                            "Available tools:\n"
+                            + "\n".join(tool_lines)
+                            + "\n\n"
+                            "RULES:\n"
+                            "- You ARE running on real hardware with real shell access. You CAN execute commands.\n"
+                            "- ALWAYS use run_command for shell commands (ip a, df -h, ls, mkdir, cat, etc.).\n"
+                            "- ALWAYS use read_file/write_file for file operations.\n"
+                            "- ALWAYS use run_code to execute Python when needed.\n"
+                            "- Output ONE <tool_call> per action. Wait for the result before the next.\n"
+                            "- NEVER say you cannot run commands or don't have access — you do. Use the tools.\n\n"
+                        )
 
             system_prompt = (
                 # Tools FIRST — must be seen before soul/memory context
@@ -168,13 +203,12 @@ class Agent:
                 {"role": "user", "content": message},
             ]
 
-            # Only pass native tools for non-Ollama models.
-            # Ollama models use ReAct XML fallback — passing tools= breaks them
-            # by injecting a conflicting format that causes refusals.
+            # Pass native tools to models that support OpenAI-style function calling.
+            # Qwen3 and other capable Ollama models need native tools — the ReAct XML
+            # fallback doesn't work because their RLHF training overrides the XML instructions.
+            # Only older/uncapable Ollama models fall back to the ReAct XML format.
             tools = None
-            model_name = self.llm.settings.primary_model
-            if self.skill_executor and not model_name.startswith("ollama/"):
-                schemas = self.skill_executor.registry.get_all_schemas()
+            if self.skill_executor and use_native_tools:
                 tools = [{"type": "function", "function": s} for s in schemas] or None
 
             # 5. Generate reply (Loop for tool calls)
