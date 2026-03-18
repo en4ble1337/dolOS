@@ -21,12 +21,16 @@ _DEFAULT_LESSONS_PATH = "data/LESSONS.md"
 logger = logging.getLogger(__name__)
 
 _REACT_TAG_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+_THINK_TAG_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
 
 def _parse_react_tool_calls(text: str) -> List[tuple]:
-    """Parse <tool_call>{"name": ..., "arguments": {...}}</tool_call> tags from model output."""
+    """Parse <tool_call> tags from model output, including inside <think> blocks (qwen3 thinking mode)."""
     calls = []
-    for match in _REACT_TAG_RE.finditer(text):
+    # Search both the visible text and any <think> block content
+    think_content = " ".join(m.group(1) for m in _THINK_TAG_RE.finditer(text))
+    search_in = text + " " + think_content
+    for match in _REACT_TAG_RE.finditer(search_in):
         try:
             payload = json.loads(match.group(1).strip())
             name = payload.get("name", "")
@@ -137,9 +141,10 @@ class Agent:
                     )
 
             system_prompt = (
+                # Tools FIRST — must be seen before soul/memory context
+                f"{tools_block}"
                 "You are the following AI Agent. Below is your core identity, rules, and personality defined in your SOUL.md file:\n\n"
                 f"<soul_instructions>\n{soul_content}\n</soul_instructions>\n\n"
-                f"{tools_block}"
                 f"{lessons_content}"
                 f"{summary_context}"
                 "Here is relevant context from your episodic memory (recent conversations):\n\n"
