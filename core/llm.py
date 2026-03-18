@@ -39,16 +39,31 @@ class LLMGateway:
         )
 
         try:
+            model = self.settings.primary_model
+            api_base = self.settings.ollama_api_base
+
+            # Remap ollama/ prefix to OpenAI-compatible endpoint so LiteLLM correctly
+            # parses native tool_calls. Ollama's /api/chat returns arguments as a dict
+            # but LiteLLM's ollama provider doesn't parse that; the /v1 endpoint uses
+            # the OpenAI wire format which LiteLLM handles correctly.
+            is_ollama_remapped = False
+            if model.startswith("ollama/") and api_base:
+                model = "openai/" + model[len("ollama/"):]
+                api_base = api_base.rstrip("/") + "/v1"
+                is_ollama_remapped = True
+
             kwargs: Dict[str, Any] = {
-                "model": self.settings.primary_model,
+                "model": model,
                 "messages": messages,
                 "tools": tools,
             }
-            if self.settings.primary_model.startswith("ollama/") and self.settings.ollama_api_base:
-                kwargs["api_base"] = self.settings.ollama_api_base
-                
+            if api_base:
+                kwargs["api_base"] = api_base
+            if is_ollama_remapped:
+                kwargs["api_key"] = "ollama"
+
             tool_names = [t["function"]["name"] for t in tools] if tools else []
-            logger.info(f"[LLM_REQUEST] model={self.settings.primary_model} | tools_sent={bool(tools)} | tools={tool_names}")
+            logger.info(f"[LLM_REQUEST] model={model} | tools_sent={bool(tools)} | tools={tool_names}")
 
             response = await acompletion(**kwargs)
 

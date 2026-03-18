@@ -82,6 +82,7 @@ agent = Agent(
     llm=llm,
     memory=memory,
     event_bus=event_bus,
+    skill_executor=executor,
     semantic_extractor=semantic_extractor,
     summarizer=summarizer,
     lesson_extractor=lesson_extractor,

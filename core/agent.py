@@ -148,7 +148,10 @@ class Agent:
                             "RULES:\n"
                             "- ALWAYS call run_command to execute shell commands — never tell the user to run them manually.\n"
                             "- ALWAYS call read_file/write_file for file operations.\n"
-                            "- NEVER say you cannot run commands — you have the tools. Use them.\n\n"
+                            "- NEVER say you cannot run commands — you have the tools and MUST use them.\n"
+                            "- NEVER write fake or simulated command output in your response text.\n"
+                            "- NEVER write '[Executing command: ...]' or similar — call the actual tool instead.\n"
+                            "- If you need real output, call the tool. Do not invent or guess the output.\n\n"
                         )
                     else:
                         # For ReAct/XML fallback models: full format with example
