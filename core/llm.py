@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Any, Dict, List, Optional
 
@@ -6,6 +7,8 @@ from pydantic import BaseModel
 
 from core.config import Settings
 from core.telemetry import Event, EventBus, EventType
+
+logger = logging.getLogger(__name__)
 
 
 class LLMResponse(BaseModel):
@@ -44,7 +47,14 @@ class LLMGateway:
             if self.settings.primary_model.startswith("ollama/") and self.settings.ollama_api_base:
                 kwargs["api_base"] = self.settings.ollama_api_base
                 
+            tool_names = [t["function"]["name"] for t in tools] if tools else []
+            logger.info(f"[LLM_REQUEST] model={self.settings.primary_model} | tools_sent={bool(tools)} | tools={tool_names}")
+
             response = await acompletion(**kwargs)
+
+            raw_tool_calls = getattr(response.choices[0].message, "tool_calls", None) if response.choices else None
+            raw_content_preview = (response.choices[0].message.content or "")[:200] if response.choices else ""
+            logger.info(f"[LLM_RESPONSE] raw_tool_calls={raw_tool_calls} | content={raw_content_preview!r}")
 
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
