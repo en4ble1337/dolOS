@@ -23,18 +23,14 @@ logger = logging.getLogger(__name__)
 _REACT_TAG_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 _THINK_TAG_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
-# Ollama models known to support native OpenAI-style function calling.
-# These are safe to pass tools= to; older/smaller models should use ReAct XML fallback.
-_OLLAMA_TOOL_CAPABLE = frozenset([
-    "qwen3", "qwen2.5", "qwq", "mistral", "llama3.1", "llama3.2", "llama3.3", "gemma3",
-])
+def _supports_native_tools(_model_name: str) -> bool:
+    """All models support native tool calling.
 
-
-def _supports_native_tools(model_name: str) -> bool:
-    """Return True if the model supports native OpenAI-style function calling."""
-    if not model_name.startswith("ollama/"):
-        return True  # Non-Ollama models (Claude, GPT-4, etc.) support it
-    return any(cap in model_name.lower() for cap in _OLLAMA_TOOL_CAPABLE)
+    Non-Ollama models (Claude, GPT-4) support it natively. Ollama models are
+    transparently remapped to openai/+/v1 in LLMGateway, giving them the same
+    OpenAI-compatible tool_calls wire format.
+    """
+    return True
 
 
 def _parse_react_tool_calls(text: str) -> List[tuple]:

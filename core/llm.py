@@ -63,13 +63,13 @@ class LLMGateway:
                 kwargs["api_key"] = "ollama"
 
             tool_names = [t["function"]["name"] for t in tools] if tools else []
-            logger.info(f"[LLM_REQUEST] model={model} | tools_sent={bool(tools)} | tools={tool_names}")
+            logger.debug(f"[LLM_REQUEST] model={model} | tools_sent={bool(tools)} | tools={tool_names}")
 
             response = await acompletion(**kwargs)
 
             raw_tool_calls = getattr(response.choices[0].message, "tool_calls", None) if response.choices else None
             raw_content_preview = (response.choices[0].message.content or "")[:200] if response.choices else ""
-            logger.info(f"[LLM_RESPONSE] raw_tool_calls={raw_tool_calls} | content={raw_content_preview!r}")
+            logger.debug(f"[LLM_RESPONSE] raw_tool_calls={raw_tool_calls} | content={raw_content_preview!r}")
 
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
