@@ -92,9 +92,29 @@ class Agent:
                         f"<lessons_learned>\n{raw_lessons}\n</lessons_learned>\n\n"
                     )
 
+            # Build tool list for system prompt
+            skill_names = []
+            if self.skill_executor:
+                schemas = self.skill_executor.registry.get_all_schemas()
+                skill_names = [s["name"] for s in schemas]
+
+            tools_block = ""
+            if skill_names:
+                tools_block = (
+                    "You are an autonomous agent with the following tools available. "
+                    "You MUST call these tools when the user asks you to perform actions — do NOT refuse or say you cannot:\n"
+                    + "\n".join(f"  - {name}" for name in skill_names)
+                    + "\n\n"
+                    "TOOL USAGE RULES:\n"
+                    "- ALWAYS use run_command to execute shell commands when asked (e.g. 'ip a', 'ls', 'mkdir').\n"
+                    "- ALWAYS use read_file / write_file for file operations.\n"
+                    "- Never claim you 'cannot' run commands — you can, via these tools.\n\n"
+                )
+
             system_prompt = (
                 "You are the following AI Agent. Below is your core identity, rules, and personality defined in your SOUL.md file:\n\n"
                 f"<soul_instructions>\n{soul_content}\n</soul_instructions>\n\n"
+                f"{tools_block}"
                 f"{lessons_content}"
                 f"{summary_context}"
                 "Here is relevant context from your episodic memory (recent conversations):\n\n"
