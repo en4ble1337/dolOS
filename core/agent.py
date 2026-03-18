@@ -145,6 +145,7 @@ class Agent:
             MAX_LOOPS = 5
             for _ in range(MAX_LOOPS):
                 response = await self.llm.generate(messages=messages, trace_id=trace_id, tools=tools)
+                logger.debug(f"LLM response: tool_calls={response.tool_calls!r}, content_preview={str(response.content)[:200]!r}")
 
                 if response.tool_calls:
                     # Append the assistant's tool call message
