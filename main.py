@@ -32,7 +32,9 @@ from heartbeat.integrations.reflection_task import ReflectionTask
 from heartbeat.integrations.system_health import SystemHealthProbe
 from heartbeat.integrations.deadman_switch import DeadManSwitch
 import skills.local.filesystem  # noqa: F401 — registers read_file, write_file
-import skills.local.system  # noqa: F401 — registers run_command
+import skills.local.system  # noqa: F401 — registers run_command, run_code
+import skills.local.meta  # noqa: F401 — registers create_skill
+import skills.local.generated  # noqa: F401 — auto-loads agent-generated skills
 from skills.executor import SkillExecutor
 from skills.registry import _default_registry as registry
 
