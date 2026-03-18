@@ -179,6 +179,7 @@ class Agent:
             for _ in range(MAX_LOOPS):
                 response = await self.llm.generate(messages=messages, trace_id=trace_id, tools=tools)
                 content = response.content or ""
+                logger.info(f"[LLM_RAW] tool_calls={bool(response.tool_calls)} | has_tool_tag={'<tool_call>' in content} | content={content[:300]!r}")
 
                 # --- Native function calling path ---
                 if response.tool_calls:
