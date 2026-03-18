@@ -46,6 +46,9 @@ ui/*.local
 *.sqlite3
 agent.db
 
+# Logs
+data/agent.log
+
 # Qdrant local storage
 data/qdrant_storage/
 
