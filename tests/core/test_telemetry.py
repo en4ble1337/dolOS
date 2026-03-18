@@ -49,7 +49,7 @@ class TestEventType:
 
     def test_total_event_count(self):
         """Ensure we have exactly the right number of event types."""
-        assert len(EventType) == 19
+        assert len(EventType) == 33
 
 
 class TestEvent:

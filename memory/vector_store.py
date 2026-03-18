@@ -1,3 +1,6 @@
+import logging
+import os
+import shutil
 from typing import Any, Dict, List, Optional, Sequence, cast
 
 from qdrant_client import QdrantClient
@@ -10,6 +13,8 @@ from qdrant_client.http.models import (
     VectorParams,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class VectorStore:
     """Wrapper around Qdrant client for vector search operations."""
@@ -21,7 +26,21 @@ class VectorStore:
             location: Storage location (":memory:", path to db, or URL).
             **kwargs: Additional client arguments.
         """
-        self.client = QdrantClient(location=location, **kwargs)
+        if location != ":memory:" and not location.startswith("http"):
+            os.makedirs(location, exist_ok=True)
+            try:
+                self.client = QdrantClient(path=location, **kwargs)
+            except Exception as e:
+                logger.warning(
+                    "Qdrant storage at '%s' appears corrupted (%s). "
+                    "Resetting to fresh storage.",
+                    location, e,
+                )
+                shutil.rmtree(location)
+                os.makedirs(location, exist_ok=True)
+                self.client = QdrantClient(path=location, **kwargs)
+        else:
+            self.client = QdrantClient(location=location, **kwargs)
 
     def create_collection(self, collection_name: str, vector_size: int, distance: Distance = Distance.COSINE) -> None:
         """Create a new collection if it doesn't exist.

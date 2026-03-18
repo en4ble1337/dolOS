@@ -111,3 +111,13 @@ def test_retrieve_memory_miss(memory_manager: MemoryManager, mock_vector_store: 
     event_types = [call[0][0].event_type for call in mock_event_bus.emit_sync.call_args_list]
     assert EventType.MEMORY_QUERY in event_types
     assert EventType.MEMORY_MISS in event_types
+
+
+def test_search_with_filter_metadata(memory_manager: MemoryManager, mock_vector_store: MagicMock) -> None:
+    mock_vector_store.query.return_value = []
+
+    memory_manager.search("test", filter_metadata={"session_id": "abc"})
+
+    # Verify filter_metadata is forwarded to vector_store.query
+    _, kwargs = mock_vector_store.query.call_args
+    assert kwargs["filter_metadata"] == {"session_id": "abc"}

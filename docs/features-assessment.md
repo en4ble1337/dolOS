@@ -1,4 +1,4 @@
-# Feature Difficulty Assessment for `my-local-agent`
+# Feature Difficulty Assessment for `dolOS`
 
 > [!NOTE]
 > This is a **read-only assessment**, not an implementation plan. It evaluates every feature group from [features.md](file:///c:/Users/Bart/Documents/AI/Projects/my-local-agent/docs/features.md) against the current state of the codebase.

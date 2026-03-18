@@ -1,4 +1,4 @@
-# Engineering Journal: `my-local-agent`
+# Engineering Journal: `dolOS`
 
 This journal tracks significant architectural decisions, completed directives, and bug fixes to ensure continuity across development sessions.
 

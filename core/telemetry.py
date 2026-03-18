@@ -88,6 +88,28 @@ class EventType(str, Enum):
     MESSAGE_RECEIVED = "channel.message.received"
     MESSAGE_SENT = "channel.message.sent"
 
+    # Semantic Extraction
+    SEMANTIC_EXTRACTION_START = "memory.semantic.extraction.start"
+    SEMANTIC_EXTRACTION_COMPLETE = "memory.semantic.extraction.complete"
+    SEMANTIC_EXTRACTION_ERROR = "memory.semantic.extraction.error"
+    SEMANTIC_DUPLICATE_DETECTED = "memory.semantic.duplicate"
+
+    # Summarization
+    SUMMARIZATION_START = "memory.summarization.start"
+    SUMMARIZATION_COMPLETE = "memory.summarization.complete"
+    SUMMARIZATION_ERROR = "memory.summarization.error"
+
+    # Lesson Extraction
+    LESSON_EXTRACTION_START = "memory.lesson.extraction.start"
+    LESSON_EXTRACTION_COMPLETE = "memory.lesson.extraction.complete"
+    LESSON_EXTRACTION_ERROR = "memory.lesson.extraction.error"
+    LESSON_DUPLICATE_SKIPPED = "memory.lesson.duplicate"
+
+    # Reflection (heartbeat consolidation)
+    REFLECTION_START = "heartbeat.reflection.start"
+    REFLECTION_COMPLETE = "heartbeat.reflection.complete"
+    REFLECTION_ERROR = "heartbeat.reflection.error"
+
     # System
     FALLBACK_TRIGGERED = "system.fallback"
     CIRCUIT_OPEN = "system.circuit.open"

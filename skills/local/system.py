@@ -1,45 +1,47 @@
-import asyncio
+import os
+
 from skills.registry import skill
+from skills.sandbox import SandboxExecutor, SandboxPolicy
+
+# Module-level sandbox executor (lazily initialised on first call)
+_sandbox: SandboxExecutor | None = None
+
+
+def _get_sandbox() -> SandboxExecutor:
+    """Return the shared SandboxExecutor, creating it on first access."""
+    global _sandbox
+    if _sandbox is None:
+        default_policy = SandboxPolicy(
+            allowed_paths=[os.getcwd()],
+            timeout=30.0,
+            max_output_length=2000,
+            allow_network=False,
+        )
+        _sandbox = SandboxExecutor(default_policy=default_policy)
+    return _sandbox
+
 
 @skill(
     name="run_command",
-    description="Run a system command in the terminal. Useful for running build scripts, listing files outside sandbox, etc."
+    description="Run a system command in the terminal. Useful for running build scripts, listing files outside sandbox, etc.",
 )
 async def run_command(command: str, timeout_seconds: float = 30.0) -> str:
-    """Executes a system shell command and returns the output (stdout + stderr).
-    Output is truncated to avoid overwhelming the context.
+    """Executes a system shell command inside a sandbox subprocess.
+
+    The command runs with restricted filesystem access and network disabled
+    by default. Output is truncated to avoid overwhelming the context.
     """
-    try:
-        process = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
-        )
+    sandbox = _get_sandbox()
+    policy = SandboxPolicy(
+        allowed_paths=sandbox.default_policy.allowed_paths,
+        timeout=timeout_seconds,
+        max_output_length=sandbox.default_policy.max_output_length,
+        allow_network=sandbox.default_policy.allow_network,
+    )
 
-        try:
-            stdout_bytes, _ = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_seconds
-            )
-        except asyncio.TimeoutError:
-            try:
-                process.kill()
-            except Exception:
-                pass
-            return f"Timeout Error: Command exceeded {timeout_seconds} seconds."
+    result = await sandbox.execute_command(command, policy=policy)
 
-        output = stdout_bytes.decode('utf-8', errors='replace').strip()
-        
-        # Truncate output to prevent massive context bloat
-        max_length = 2000
-        if len(output) > max_length:
-            output = output[:max_length] + "\n...[Output truncated]..."
+    if result["success"]:
+        return result["output"] if result["output"] else "Command executed successfully with no output."
 
-        if process.returncode != 0:
-            if not output:
-                return f"Exit Code: {process.returncode}"
-            return f"{output}\nExit Code: {process.returncode}"
-            
-        return output if output else "Command executed successfully with no output."
-
-    except Exception as e:
-        return f"Execution Error: {str(e)}"
+    return result["output"]

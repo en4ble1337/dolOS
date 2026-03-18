@@ -1,9 +1,9 @@
-# Observability Backend Implementation Plan
+# Implementation Plan: Observability Backend for `dolOS`ation Plan
 
 **Directive:** 001
 **Date:** 2026-03-13
 **Goal:** Build the observability backend (Phase A) — EventBus, Event types, and SQLite persistence — as the foundation layer for all future telemetry in the agent.
-**Architecture Notes:** Every agent action will emit an `Event` to an `EventBus` (backed by `asyncio.Queue`). An `EventCollector` consumes that queue and writes events to SQLite via `aiosqlite`. Three tables — `events`, `metrics`, `traces` — are auto-created when the collector starts. This is a zero-dependency-on-other-modules foundation; no other my-local-agent modules need to exist for this to work.
+**Architecture Notes:** Every agent action will emit an `Event` to an `EventBus` (backed by `asyncio.Queue`). An `EventCollector` consumes that queue and writes events to SQLite via `aiosqlite`. Three tables — `events`, `metrics`, `traces` — are auto-created when the collector starts. This is a zero-dependency-on-other-modules foundation; no other dolOS modules need to exist for this to work.
 
 ---
 

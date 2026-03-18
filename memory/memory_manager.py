@@ -1,4 +1,5 @@
 import time
+import uuid
 from typing import Any, Dict, List, Literal, Optional, cast
 
 from core.telemetry import Event, EventBus, EventType
@@ -62,8 +63,8 @@ class MemoryManager:
             **(metadata or {})
         }
 
-        # Use timestamp as part of ID for simplicity
-        point_id = int(time.time() * 1000)
+        # UUID-based ID to avoid millisecond collisions
+        point_id = uuid.uuid4().int >> 64
 
         self.vector_store.upsert(
             collection_name=memory_type,
@@ -87,7 +88,8 @@ class MemoryManager:
         limit: int = 5,
         recency_weight: float = 0.2,
         importance_weight: float = 0.3,
-        similarity_weight: float = 0.5
+        similarity_weight: float = 0.5,
+        filter_metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Search memory with weighted scoring.
 
@@ -98,6 +100,7 @@ class MemoryManager:
             recency_weight: Weight for how recent the memory is.
             importance_weight: Weight for memory's importance field.
             similarity_weight: Weight for vector similarity score.
+            filter_metadata: Optional metadata key-value pairs to filter results.
 
         Returns:
             List of processed results.
@@ -121,7 +124,8 @@ class MemoryManager:
         results = self.vector_store.query(
             collection_name=memory_type,
             query_vector=query_vector,
-            limit=limit
+            limit=limit,
+            filter_metadata=filter_metadata,
         )
 
         if not results:

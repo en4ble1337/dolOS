@@ -1,6 +1,7 @@
-# My Local-First AI Agent
+# 🌌 dolOS
+**The Core of Project Dolores: Local-First Edge AI OS**
 
-Custom AI agent system based on OpenClaw architecture, optimized for local-first operation with Ollama on RTX 5090.
+**dolOS** is a high-performance, multimodal agentic engine designed to serve as the "brain" for the Dolores project. Engineered for absolute privacy and low-latency execution at the edge, it is optimized for high-end local hardware (RTX 5090 + Ollama) to coordinate memory, perception, and complex tool-use.
 
 ## Key Features
 
@@ -100,7 +101,7 @@ curl https://rclone.org/install.sh | sudo bash
 
 ```bash
 # Clone and navigate
-cd my-local-agent
+cd dolOS
 
 # Install dependencies (using UV - recommended)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -247,7 +248,7 @@ GPG_RECIPIENT=your-email@example.com
 ## Project Structure
 
 ```
-my-local-agent/
+dolOS/
 ├── core/                    # Core agent logic
 │   ├── agent.py            # Main agent orchestration
 │   ├── llm.py              # LiteLLM integration

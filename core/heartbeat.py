@@ -1,9 +1,19 @@
+from __future__ import annotations
+
+import logging
 import uuid
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
 
 from core.telemetry import Event, EventBus, EventType, reset_trace_id, set_trace_id
+from heartbeat.integrations.base import HeartbeatIntegration, IntegrationRegistry
+
+if TYPE_CHECKING:
+    from heartbeat.integrations.deadman_switch import DeadManSwitch
+    from heartbeat.integrations.system_health import SystemHealthProbe
+
+logger = logging.getLogger(__name__)
 
 
 class HeartbeatSystem:
@@ -12,6 +22,7 @@ class HeartbeatSystem:
     def __init__(self, event_bus: EventBus) -> None:
         self.event_bus = event_bus
         self.scheduler = AsyncIOScheduler()
+        self.integration_registry = IntegrationRegistry()
         self._running = False
 
     def start(self) -> None:
@@ -26,6 +37,12 @@ class HeartbeatSystem:
             self.scheduler.shutdown()
             self._running = False
 
+    def restart(self) -> None:
+        """Shut down and restart the scheduler."""
+        logger.info("HeartbeatSystem: restarting scheduler.")
+        self.shutdown()
+        self.start()
+
     def is_running(self) -> bool:
         """Check if the scheduler is active."""
         return self._running
@@ -37,15 +54,7 @@ class HeartbeatSystem:
         trigger: str,
         **trigger_args: Any,
     ) -> None:
-        """
-        Register an async periodic background task.
-
-        Args:
-            name: Human-readable name of the task.
-            func: The asynchronous callable to run.
-            trigger: APScheduler trigger type ("date", "interval", "cron")
-            **trigger_args: Arguments for the trigger (e.g. seconds=60)
-        """
+        """Register an async periodic background task."""
         self.scheduler.add_job(
             self._wrap_task(name, func),
             trigger=trigger,
@@ -53,6 +62,27 @@ class HeartbeatSystem:
             replace_existing=True,
             **trigger_args,
         )
+
+    def register_integration(self, integration: HeartbeatIntegration) -> None:
+        """Register an integration and schedule its check() on a 5-minute interval."""
+        self.integration_registry.register(integration)
+        self.register_task(
+            name=f"integration.{integration.name}",
+            func=integration.check,
+            trigger="interval",
+            minutes=5,
+        )
+
+    def register_default_tasks(
+        self,
+        system_health_probe: Optional["SystemHealthProbe"] = None,
+        dead_man_switch: Optional["DeadManSwitch"] = None,
+    ) -> None:
+        """Register the default standard agent integrations."""
+        if system_health_probe:
+            self.register_integration(system_health_probe)
+        if dead_man_switch:
+            self.register_integration(dead_man_switch)
 
     def _wrap_task(
         self, name: str, func: Callable[[], Coroutine[Any, Any, Any]]
@@ -73,7 +103,6 @@ class HeartbeatSystem:
                     )
                 )
 
-                # Execute the real task
                 result = await func()
 
                 await self.event_bus.emit(
@@ -87,7 +116,6 @@ class HeartbeatSystem:
                 )
 
             except Exception as e:
-                # Catch failures so we don't bring down the scheduler thread
                 await self.event_bus.emit(
                     Event(
                         event_type=EventType.HEARTBEAT_COMPLETE,
@@ -101,31 +129,3 @@ class HeartbeatSystem:
                 reset_trace_id(token)
 
         return wrapped
-
-    def register_default_tasks(self, memory_manager: Any = None, llm_gateway: Any = None) -> None:
-        """Register the default standard agent tasks."""
-        
-        async def health_check() -> str:
-            """Pings dependencies to ensure health."""
-            # Example ping implementation
-            return "Health check passed. Dependencies ok."
-            
-        async def self_reflection() -> str:
-            """Summarizes older episodic memories."""
-            if not memory_manager or not llm_gateway:
-                return "Reflection skipped: missing components."
-            return "Self-reflection complete."
-
-        self.register_task(
-            name="system.health_check",
-            func=health_check,
-            trigger="interval",
-            minutes=5,
-        )
-
-        self.register_task(
-            name="agent.self_reflection",
-            func=self_reflection,
-            trigger="interval",
-            hours=6,
-        )

@@ -77,3 +77,26 @@ def test_query_with_metadata_filter(vector_store: VectorStore) -> None:
 
     assert len(results) == 1
     assert results[0].payload["id"] == "doc2"
+
+
+def test_file_backed_persistence(tmp_path: Any) -> None:
+    storage_path = str(tmp_path / "qdrant_test")
+
+    # Create store, insert data, then close
+    store1 = VectorStore(location=storage_path)
+    store1.create_collection("persist_test", 3)
+    store1.upsert(
+        "persist_test",
+        vectors=[[0.1, 0.2, 0.3]],
+        payloads=[{"text": "I survive restarts"}],
+        ids=[1],
+    )
+    store1.client.close()
+
+    # Reopen from same path — data should still be there
+    store2 = VectorStore(location=storage_path)
+    results = store2.query("persist_test", [0.1, 0.2, 0.3], limit=1)
+
+    assert len(results) == 1
+    assert results[0].payload["text"] == "I survive restarts"
+    store2.client.close()

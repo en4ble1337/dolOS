@@ -1,0 +1,39 @@
+[Unit]
+Description=dolOS AI Agent
+Documentation=https://github.com/your-repo/dolOS
+After=network-online.target
+Wants=network-online.target
+# Uncomment if Ollama runs as a separate systemd service:
+# After=ollama.service
+
+[Service]
+Type=simple
+User=dolos
+Group=dolos
+WorkingDirectory=/opt/dolOS
+EnvironmentFile=/opt/dolOS/.env
+
+ExecStart=/opt/dolOS/.venv/bin/python main.py
+
+# Restart on crash; don't restart on clean exit (exit code 0)
+Restart=on-failure
+RestartSec=10s
+# Prevent runaway restart loops: max 5 restarts within 2 minutes
+StartLimitIntervalSec=120s
+StartLimitBurst=5
+
+# Give the agent 15 seconds to finish in-flight requests on stop
+TimeoutStopSec=15s
+KillMode=mixed
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+# journald captures stdout/stderr automatically — no log files needed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dolOS
+
+[Install]
+WantedBy=multi-user.target

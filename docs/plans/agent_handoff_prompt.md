@@ -1,6 +1,6 @@
-# My Local Agent - Phase 2 Handoff Prompt
+# dolOS Project Context for Hand-off Prompt
 
-You are an agent operating on the `my-local-agent` codebase. This architectural implementation is a local-first AI agent optimized for Ollama and local telemetry. I am handing this codebase off to you to continue development on Phase 2.
+You are an agent operating on the `dolOS` codebase. This architectural implementation is a local-first AI agent optimized for Ollama and local telemetry. I am handing this codebase off to you to continue development on Phase 2.
 
 ## Important Context & State
 - **Phase 1 backend is 100% complete!** Scaffolded services, Memory (`Qdrant`/`SentenceTransformers`), LLM integration (`LiteLLM`/`Ollama`), Core Agent orchestrator, skills framework, and telemetry backend (`EventBus`, `EventCollector`) are fully tested and functional.

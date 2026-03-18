@@ -1,8 +1,8 @@
 # Architecture Comparison: "Lean & Mean" vs. "Full Agent OS"
 
-Based on an analysis of the **OpenClaw (v4.6)** architecture compared to the **my-local-agent** codebase, our architecture is significantly **simpler and more streamlined** to maintain, while adopting the same "Industrial Grade" patterns as OpenClaw. 
+Based on an analysis of the **OpenClaw (v4.6)** architecture compared to the **dolOS** codebase, our architecture is significantly **simpler and more streamlined** to maintain, while adopting the same "Industrial Grade" patterns as OpenClaw. 
 
-| Feature | **OpenClaw (The Giant)** | **My-Local-Agent (The Scout)** |
+| Feature | **OpenClaw (The Giant)** | **dolOS (The Scout)** |
 | :--- | :--- | :--- |
 | **Philosophy** | A complete "Operating System" for agents. | A modular, observability-first "Engine." |
 | **Core Language** | Primarily **Node.js** (Gateway) + TypeScript. | Pure **Python** (Backend) + React (UI). |
@@ -36,9 +36,9 @@ This project is **much simpler to work on** because it follows modern Pythonic p
 
 ---
 
-# My Local-First Agent: Technology Stack
+# dolOS: Technology Stack
 
-This document details the complete technology choices and framework decisions made to build the `my-local-agent` architecture. The framework was engineered from scratch specifically for a secure, local-first ecosystem (optimized around an RTX 5090 running Ollama).
+This document details the complete technology choices and framework decisions made to build the `dolOS` architecture. The framework was engineered from scratch specifically for a secure, local-first ecosystem (optimized around an RTX 5090 running Ollama).
 
 ---
 

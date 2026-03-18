@@ -2,7 +2,7 @@
 
 ## Project Context
 
-**Name:** my-local-agent
+**Name:** dolOS
 **Purpose:** Custom AI agent system based on OpenClaw architecture, optimized for local-first operation with Ollama on RTX 5090.
 **Stack:** Python 3.11+, FastAPI, Ollama, LiteLLM, Qdrant, sentence-transformers, APScheduler
 
@@ -18,7 +18,7 @@
 
 ## 1. The Prime Directive
 
-You are an agent operating on the my-local-agent codebase.
+You are an agent operating on the dolOS codebase.
 
 **Before writing ANY code:**
 1. Read `README.md` to understand the architecture and file structure

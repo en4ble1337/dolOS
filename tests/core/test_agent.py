@@ -1,4 +1,7 @@
-from unittest.mock import AsyncMock, MagicMock
+"""Tests for the Agent orchestrator."""
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -6,6 +9,8 @@ from core.agent import Agent
 from core.llm import LLMGateway, LLMResponse
 from core.telemetry import EventBus
 from memory.memory_manager import MemoryManager
+from memory.semantic_extractor import SemanticExtractor
+from memory.summarizer import ConversationSummarizer
 from skills.executor import SkillExecutor
 from skills.registry import SkillRegistry
 
@@ -29,9 +34,13 @@ def mock_llm() -> LLMGateway:
 def mock_memory() -> MemoryManager:
     memory = MagicMock(spec=MemoryManager)
     memory.add_memory = MagicMock()
-    # Mock search to return one fake context memory
+    # Mock search to return context for episodic, empty for semantic
     memory.search = MagicMock(
-        return_value=[{"text": "Previous context from memory."}]
+        side_effect=lambda **kwargs: (
+            [{"text": "Previous context from memory."}]
+            if kwargs.get("memory_type") == "episodic"
+            else []
+        )
     )
     return memory
 
@@ -45,6 +54,21 @@ def mock_skill_executor() -> SkillExecutor:
     ]
     executor.execute = AsyncMock(return_value="Tool execution result")
     return executor
+
+
+@pytest.fixture
+def mock_semantic_extractor() -> SemanticExtractor:
+    ext = MagicMock(spec=SemanticExtractor)
+    ext.extract_and_store = AsyncMock(return_value=2)
+    return ext
+
+
+@pytest.fixture
+def mock_summarizer() -> ConversationSummarizer:
+    summ = MagicMock(spec=ConversationSummarizer)
+    summ.increment_turn = MagicMock(return_value=False)
+    summ.get_session_summary = MagicMock(return_value=None)
+    return summ
 
 
 class TestAgent:
@@ -64,33 +88,30 @@ class TestAgent:
 
         assert reply == "Hello from LLM"
 
-        # 1. User message was saved to memory
+        # User message was saved to memory
         mock_memory.add_memory.assert_any_call(
             text=f"User: {user_msg}",
             memory_type="episodic",
             metadata={"session_id": session_id, "role": "user"}
         )
 
-        # 2. Assistant reply was saved
+        # Assistant reply was saved
         mock_memory.add_memory.assert_any_call(
             text=f"Assistant: {reply}",
             memory_type="episodic",
             metadata={"session_id": session_id, "role": "assistant"}
         )
 
-        # 3. Memory was searched for context
-        mock_memory.search.assert_called_once_with(
-            query=user_msg,
-            memory_type="episodic",
-            limit=5
-        )
+        # Memory was searched for both episodic and semantic context
+        search_calls = mock_memory.search.call_args_list
+        search_types = [c.kwargs.get("memory_type") for c in search_calls]
+        assert "episodic" in search_types
+        assert "semantic" in search_types
 
-        # 4. LLM was called with formatted messages
+        # LLM was called with formatted messages including context
         call_args = mock_llm.generate.call_args
         assert call_args is not None
-        _, kwargs = call_args
-
-        messages = kwargs["messages"]
+        messages = call_args.kwargs["messages"]
         assert len(messages) >= 2
         assert "Previous context from memory." in messages[0]["content"]
         assert messages[-1]["role"] == "user"
@@ -111,7 +132,7 @@ class TestAgent:
         tool_call_mock.id = "call_123"
         tool_call_mock.function.name = "test_tool"
         tool_call_mock.function.arguments = "{}"
-        
+
         mock_llm.generate.side_effect = [
             LLMResponse(content=None, tool_calls=[tool_call_mock]),
             LLMResponse(content="Final response after tool")
@@ -123,3 +144,127 @@ class TestAgent:
         assert mock_llm.generate.call_count == 2
         mock_skill_executor.execute.assert_called_once_with("test_tool", {}, mock_llm.generate.call_args_list[0].kwargs['trace_id'])
 
+    @pytest.mark.asyncio
+    async def test_searches_both_episodic_and_semantic(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+    ) -> None:
+        # Semantic search returns facts
+        mock_memory.search = MagicMock(
+            side_effect=lambda **kwargs: (
+                [{"text": "User: previous chat"}]
+                if kwargs.get("memory_type") == "episodic"
+                else [{"text": "User prefers dark mode"}]
+            )
+        )
+
+        agent = Agent(llm=mock_llm, memory=mock_memory, event_bus=mock_event_bus)
+        await agent.process_message("s1", "hello")
+
+        # System prompt should contain both blocks
+        system_prompt = mock_llm.generate.call_args.kwargs["messages"][0]["content"]
+        assert "episodic memory" in system_prompt
+        assert "semantic memory" in system_prompt
+        assert "User prefers dark mode" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_semantic_extraction_runs_in_background(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        mock_semantic_extractor: SemanticExtractor,
+    ) -> None:
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            semantic_extractor=mock_semantic_extractor,
+        )
+
+        await agent.process_message("s1", "I live in NYC")
+        # Allow background task to run
+        await asyncio.sleep(0.05)
+
+        mock_semantic_extractor.extract_and_store.assert_called_once()
+        call_kwargs = mock_semantic_extractor.extract_and_store.call_args.kwargs
+        assert call_kwargs["user_message"] == "I live in NYC"
+        assert call_kwargs["session_id"] == "s1"
+
+    @pytest.mark.asyncio
+    async def test_semantic_extraction_failure_doesnt_crash(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        mock_semantic_extractor: SemanticExtractor,
+    ) -> None:
+        mock_semantic_extractor.extract_and_store = AsyncMock(
+            side_effect=RuntimeError("extraction boom")
+        )
+
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            semantic_extractor=mock_semantic_extractor,
+        )
+
+        # Should not raise
+        reply = await agent.process_message("s1", "test")
+        assert reply == "Hello from LLM"
+        await asyncio.sleep(0.05)
+
+    @pytest.mark.asyncio
+    async def test_summarization_triggers_at_threshold(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        mock_summarizer: ConversationSummarizer,
+    ) -> None:
+        mock_summarizer.increment_turn.return_value = True
+        mock_summarizer.summarize_session = AsyncMock(return_value="A summary")
+
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            summarizer=mock_summarizer,
+        )
+
+        await agent.process_message("s1", "message")
+        await asyncio.sleep(0.05)
+
+        mock_summarizer.summarize_session.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_summary_used_in_context(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        mock_summarizer: ConversationSummarizer,
+    ) -> None:
+        mock_summarizer.get_session_summary.return_value = "Previously discussed Python project setup."
+
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            summarizer=mock_summarizer,
+        )
+
+        await agent.process_message("s1", "continue our discussion")
+
+        system_prompt = mock_llm.generate.call_args.kwargs["messages"][0]["content"]
+        assert "Previously discussed Python project setup." in system_prompt
+
+        # Episodic limit should be reduced when summary exists
+        episodic_search = [
+            c for c in mock_memory.search.call_args_list
+            if c.kwargs.get("memory_type") == "episodic"
+        ]
+        assert episodic_search[0].kwargs["limit"] == 3

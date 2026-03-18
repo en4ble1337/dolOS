@@ -1,5 +1,5 @@
 [project]
-name = "my-local-agent"
+name = "dolos"
 version = "0.1.0"
 description = "Local-first AI agent with Ollama, Qdrant, and multi-channel support"
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
