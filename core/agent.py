@@ -133,11 +133,12 @@ class Agent:
                         + "\n".join(tool_lines)
                         + "\n\n"
                         "RULES:\n"
-                        "- ALWAYS use run_command for shell commands (ip a, df -h, mkdir, etc.).\n"
+                        "- You ARE running on real hardware with real shell access. You CAN execute commands.\n"
+                        "- ALWAYS use run_command for shell commands (ip a, df -h, ls, mkdir, cat, etc.).\n"
                         "- ALWAYS use read_file/write_file for file operations.\n"
                         "- ALWAYS use run_code to execute Python when needed.\n"
                         "- Output ONE <tool_call> per action. Wait for the result before the next.\n"
-                        "- Never say you cannot run commands — use the tools above.\n\n"
+                        "- NEVER say you cannot run commands or don't have access — you do. Use the tools.\n\n"
                     )
 
             system_prompt = (
@@ -158,6 +159,8 @@ class Agent:
                 "- Do NOT hallucinate sources like 'Source: MEMORY.md#L42' — these are not real.\n"
                 "- Respond directly and concisely to the user's message."
             )
+
+            logger.debug(f"[SYSTEM_PROMPT] {system_prompt[:800]!r}")
 
             # 4. Form message list
             messages: List[Dict[str, Any]] = [

@@ -46,6 +46,9 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+_file_handler = logging.FileHandler("agent.log")
+_file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+logging.getLogger().addHandler(_file_handler)
 logger = logging.getLogger("main")
 
 # Instantiate Core Components
