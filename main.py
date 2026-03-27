@@ -171,7 +171,7 @@ async def main() -> None:
     """Main entry point representing the agent process boot up."""
     logger.info("Booting dolOS...")
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning")
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="warning")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
     background_tasks = [server_task]

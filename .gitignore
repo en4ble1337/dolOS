@@ -57,6 +57,7 @@ data/qdrant_storage/
 .vscode/
 .idea/
 *.swp
+.claude/
 
 # Testing / Cache
 .coverage
