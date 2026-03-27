@@ -94,8 +94,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
 # Configure
-cp deploy/.env.example .env
-nano .env  # set PRIMARY_MODEL, OLLAMA_API_BASE, TELEGRAM_BOT_TOKEN
+cp .env.example .env
+nano .env  # adjust PRIMARY_MODEL or channel tokens if needed
 
 # Run
 .venv/bin/python main.py
@@ -115,26 +115,34 @@ journalctl -u dolOS -f
 
 ```bash
 # LLM
-PRIMARY_MODEL=ollama/qwen3-coder:30b
+PRIMARY_MODEL=ollama/llama3
 OLLAMA_API_BASE=http://localhost:11434
 
-# Optional cloud fallback
-# ANTHROPIC_API_KEY=sk-ant-...
-# OPENAI_API_KEY=sk-...
+# Optional channels
+# TELEGRAM_BOT_TOKEN=...
+# DISCORD_BOT_TOKEN=...
 
-# Channels
-TELEGRAM_BOT_TOKEN=...
-
-# Alerts (dead man's switch escalation)
+# Optional alerts (dead man's switch escalation)
 # TELEGRAM_ALERT_CHAT_ID=...
 # DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
-# Memory
+# Memory / Qdrant
+# DATA_DIR can be a local path or an HTTP Qdrant URL.
 DATA_DIR=data/qdrant_storage
+SEMANTIC_EXTRACTION_ENABLED=true
+SEMANTIC_SIMILARITY_THRESHOLD=0.85
+SUMMARIZATION_ENABLED=true
+SUMMARIZATION_TURN_THRESHOLD=10
+LESSON_EXTRACTION_ENABLED=true
+LESSON_CONSOLIDATION_THRESHOLD=20
 
 # Logging
 LOG_LEVEL=INFO
 ```
+
+Cloud fallback keys are intentionally omitted from the default local-first setup. Re-enable them later only if you add a cloud `FALLBACK_MODEL`.
+
+`API_TOKEN` is not used by the current Python application and is intentionally omitted.
 
 ---
 

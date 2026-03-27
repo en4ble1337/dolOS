@@ -83,22 +83,15 @@ cp .env.example .env
 nano .env  # or use your preferred editor
 
 # Minimum required for testing:
-# - Leave Ollama as default (http://localhost:11434)
-# - Set TELEGRAM_BOT_TOKEN if you want Telegram (optional for testing)
-# - Set API_TOKEN to any random string for API access
+# - PRIMARY_MODEL=ollama/llama3
+# - OLLAMA_API_BASE=http://localhost:11434
+# - DATA_DIR=data/qdrant_storage
+# - Leave TELEGRAM_BOT_TOKEN and DISCORD_BOT_TOKEN commented out unless you want those channels
 ```
 
-### 5. Copy Configuration
+`API_TOKEN` is not used by the current app and can be omitted.
 
-```bash
-# Copy example config
-cp config/settings.yaml.example config/settings.yaml
-
-# Review and adjust if needed (defaults are fine for testing)
-nano config/settings.yaml
-```
-
-### 6. Download Embedding Model
+### 5. Download Embedding Model
 
 ```bash
 # This will download the model to cache (~400MB)
