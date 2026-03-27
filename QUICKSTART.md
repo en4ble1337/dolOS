@@ -98,6 +98,42 @@ nano .env  # or use your preferred editor
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
 ```
 
+### 6. Run dolOS
+
+**Option A: Direct (for testing)**
+```bash
+cd /path/to/dolOS
+source .venv/bin/activate
+python main.py
+```
+
+**Option B: systemd service (for production)**
+
+```bash
+# 1. Copy or symlink the repo to /opt/dolOS (the service expects it there)
+sudo ln -s /root/dolOS /opt/dolOS   # or cp -r
+
+# 2. Make sure /opt/dolOS/.env exists and is configured
+#    (the service reads EnvironmentFile=/opt/dolOS/.env)
+
+# 3. Install the service
+sudo cp deploy/dolOS.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# 4. (Optional) Create a dedicated user instead of running as root:
+#    sudo useradd -r -s /bin/false -d /opt/dolOS dolos
+#    sudo chown -R dolos:dolos /opt/dolOS
+#    Then uncomment User=dolos and Group=dolos in the service file.
+
+# 5. Start
+sudo systemctl enable --now dolOS
+journalctl -u dolOS -f
+```
+
+> **Note:** Docker Compose (`docker compose up -d`) only starts the Qdrant
+> vector database. The dolOS agent itself runs natively via Python, not in
+> a container.
+
 ## First Test Run
 
 ### Test 1: Terminal Chat (Minimal Setup)

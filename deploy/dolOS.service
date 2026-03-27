@@ -5,11 +5,17 @@ After=network-online.target
 Wants=network-online.target
 # Uncomment if Ollama runs as a separate systemd service:
 # After=ollama.service
+# Prevent runaway restart loops: max 5 restarts within 2 minutes
+StartLimitIntervalSec=120s
+StartLimitBurst=5
 
 [Service]
 Type=simple
-User=dolos
-Group=dolos
+# By default runs as root. To run as a dedicated user, create it first:
+#   sudo useradd -r -s /bin/false -d /opt/dolOS dolos
+# then uncomment the next two lines:
+# User=dolos
+# Group=dolos
 WorkingDirectory=/opt/dolOS
 EnvironmentFile=/opt/dolOS/.env
 
@@ -18,17 +24,14 @@ ExecStart=/opt/dolOS/.venv/bin/python main.py
 # Restart on crash; don't restart on clean exit (exit code 0)
 Restart=on-failure
 RestartSec=10s
-# Prevent runaway restart loops: max 5 restarts within 2 minutes
-StartLimitIntervalSec=120s
-StartLimitBurst=5
 
 # Give the agent 15 seconds to finish in-flight requests on stop
 TimeoutStopSec=15s
 KillMode=mixed
 
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
+# Security hardening (re-enable when not running as root)
+# NoNewPrivileges=true
+# PrivateTmp=true
 
 # journald captures stdout/stderr automatically — no log files needed
 StandardOutput=journal
