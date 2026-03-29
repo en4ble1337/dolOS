@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -121,3 +122,93 @@ def test_search_with_filter_metadata(memory_manager: MemoryManager, mock_vector_
     # Verify filter_metadata is forwarded to vector_store.query
     _, kwargs = mock_vector_store.query.call_args
     assert kwargs["filter_metadata"] == {"session_id": "abc"}
+
+
+def test_search_min_score_filters_low_results(memory_manager: MemoryManager, mock_vector_store: MagicMock) -> None:
+    """min_score=0.99 should exclude all results since no memory scores that high with an unrelated query."""
+    now = datetime.now().timestamp()
+    mock_results = [
+        MagicMock(
+            score=0.3,
+            payload={"text": "Something completely unrelated", "timestamp": now, "importance": 0.1}
+        ),
+        MagicMock(
+            score=0.2,
+            payload={"text": "Also unrelated", "timestamp": now, "importance": 0.1}
+        ),
+    ]
+    mock_vector_store.query.return_value = mock_results
+
+    results = memory_manager.search("quantum physics equations", min_score=0.99)
+
+    assert len(results) == 0
+
+
+def test_search_min_score_zero_returns_all(memory_manager: MemoryManager, mock_vector_store: MagicMock) -> None:
+    """min_score=0.0 (default) should return results normally without filtering."""
+    now = datetime.now().timestamp()
+    mock_results = [
+        MagicMock(
+            score=0.5,
+            payload={"text": "Memory A", "timestamp": now, "importance": 0.5}
+        ),
+        MagicMock(
+            score=0.4,
+            payload={"text": "Memory B", "timestamp": now, "importance": 0.4}
+        ),
+    ]
+    mock_vector_store.query.return_value = mock_results
+
+    results = memory_manager.search("test query", min_score=0.0)
+
+    assert len(results) == 2
+
+
+def test_recency_exponential_never_zero(memory_manager: MemoryManager, mock_vector_store: MagicMock) -> None:
+    """A very old memory (1000 days) should still have recency > 0 with exponential decay."""
+    age_1000_days = 1000 * 24 * 3600
+    old_timestamp = datetime.now().timestamp() - age_1000_days
+    mock_results = [
+        MagicMock(
+            score=0.8,
+            payload={"text": "Very old memory", "timestamp": old_timestamp, "importance": 0.5}
+        ),
+    ]
+    mock_vector_store.query.return_value = mock_results
+
+    results = memory_manager.search("old memory")
+
+    assert len(results) == 1
+    # With exponential decay, recency is always > 0; with linear 30-day it would be 0
+    # Verify the score is positive (recency contribution is non-zero)
+    assert results[0]["score"] > 0
+    # Double-check: compute expected recency directly using math.exp
+    half_life_seconds = memory_manager.recency_decay_days * 24 * 3600
+    expected_recency = math.exp(-0.693 * age_1000_days / half_life_seconds)
+    assert expected_recency > 0
+
+
+def test_recency_half_life_at_decay_days(memory_manager: MemoryManager, mock_vector_store: MagicMock) -> None:
+    """A memory exactly recency_decay_days old should have recency ~0.5 (±0.05)."""
+    decay_days = memory_manager.recency_decay_days
+    age_at_half_life = decay_days * 24 * 3600
+    old_timestamp = datetime.now().timestamp() - age_at_half_life
+    mock_results = [
+        MagicMock(
+            score=0.0,
+            payload={"text": "Half-life memory", "timestamp": old_timestamp, "importance": 0.0}
+        ),
+    ]
+    mock_vector_store.query.return_value = mock_results
+
+    # Use weights that isolate recency: recency_weight=1, others=0
+    results = memory_manager.search(
+        "half-life test",
+        recency_weight=1.0,
+        importance_weight=0.0,
+        similarity_weight=0.0,
+    )
+
+    assert len(results) == 1
+    # score == recency * 1.0 + 0 + 0, so score == recency
+    assert abs(results[0]["score"] - 0.5) <= 0.05

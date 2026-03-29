@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     summarization_turn_threshold: int = Field(default=10)
     lesson_extraction_enabled: bool = Field(default=True)
     lesson_consolidation_threshold: int = Field(default=20)
+    memory_recency_decay_days: int = Field(default=90)
     log_level: str = Field(default="INFO")
+    mcp_enabled: bool = Field(default=True)
+    mcp_servers_config: str = Field(default="config/mcp_servers.yaml")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

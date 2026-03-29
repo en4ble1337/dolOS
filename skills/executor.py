@@ -1,9 +1,12 @@
 import asyncio
 import inspect
+from pathlib import Path
 from typing import Any
 
 from core.telemetry import Event, EventBus, EventType
 from skills.registry import SkillRegistry
+
+_GENERATED_DIR = Path(__file__).parent / "local" / "generated"
 
 
 class SkillExecutor:
@@ -69,11 +72,24 @@ class SkillExecutor:
 
         except asyncio.TimeoutError:
             error_msg = f"Timeout Error: Skill '{name}' exceeded {self.timeout} seconds."
+            if (_GENERATED_DIR / f"{name}.py").exists():
+                error_msg += (
+                    f" — This is a generated skill. "
+                    f"Call fix_skill(name='{name}') to retrieve its current source, "
+                    f"then call create_skill(name='{name}', ...) with corrected code to replace it."
+                )
             await self._emit_error(name, error_msg, trace_id)
             return error_msg
 
         except Exception as e:
             error_msg = f"Execution Error in skill '{name}': {e}"
+            # If this is an agent-generated skill, tell the LLM it can self-correct
+            if (_GENERATED_DIR / f"{name}.py").exists():
+                error_msg += (
+                    f" — This is a generated skill. "
+                    f"Call fix_skill(name='{name}') to retrieve its current source, "
+                    f"then call create_skill(name='{name}', ...) with corrected code to replace it."
+                )
             await self._emit_error(name, error_msg, trace_id)
             return error_msg
 

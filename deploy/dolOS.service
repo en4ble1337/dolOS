@@ -19,6 +19,14 @@ Type=simple
 WorkingDirectory=/opt/dolOS
 EnvironmentFile=/opt/dolOS/.env
 
+# Build the React dashboard before starting (skips if ui/dist already exists and is current)
+ExecStartPre=/bin/bash -c 'cd /opt/dolOS/ui && npm install --silent && npm run build'
+# Install Playwright Chromium browser if not already present (idempotent)
+# --yes is an npx flag (auto-confirms package install); "playwright install chromium" is the command.
+# This installs the Node.js Playwright Chromium browser used by @playwright/mcp.
+# Idempotent: skips if already installed. || true prevents blocking if Node.js is absent.
+ExecStartPre=/bin/bash -c 'npx --yes playwright install chromium 2>/dev/null || true'
+
 ExecStart=/opt/dolOS/.venv/bin/python main.py
 
 # Restart on crash; don't restart on clean exit (exit code 0)

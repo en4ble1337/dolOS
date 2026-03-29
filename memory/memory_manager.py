@@ -1,3 +1,4 @@
+import math
 import time
 import uuid
 from typing import Any, Dict, List, Literal, Optional, cast
@@ -14,7 +15,8 @@ class MemoryManager:
         self,
         vector_store: Optional[VectorStore] = None,
         embedding_service: Optional[EmbeddingService] = None,
-        event_bus: Optional[EventBus] = None
+        event_bus: Optional[EventBus] = None,
+        recency_decay_days: int = 90
     ) -> None:
         """Initialize memory collections and services.
 
@@ -22,10 +24,12 @@ class MemoryManager:
             vector_store: Optional VectorStore instance.
             embedding_service: Optional EmbeddingService instance.
             event_bus: Optional EventBus for telemetry.
+            recency_decay_days: Half-life for exponential recency decay in days.
         """
         self.vector_store = vector_store or VectorStore()
         self.embedding_service = embedding_service or EmbeddingService()
         self.event_bus = event_bus
+        self.recency_decay_days = recency_decay_days
 
         # Ensure collections exist
         dim = self.embedding_service.dimension
@@ -90,6 +94,7 @@ class MemoryManager:
         importance_weight: float = 0.3,
         similarity_weight: float = 0.5,
         filter_metadata: Optional[Dict[str, Any]] = None,
+        min_score: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """Search memory with weighted scoring.
 
@@ -101,6 +106,7 @@ class MemoryManager:
             importance_weight: Weight for memory's importance field.
             similarity_weight: Weight for vector similarity score.
             filter_metadata: Optional metadata key-value pairs to filter results.
+            min_score: Minimum total score threshold; results below are excluded.
 
         Returns:
             List of processed results.
@@ -147,9 +153,10 @@ class MemoryManager:
             importance = payload.get("importance", 0.5)
             timestamp = payload.get("timestamp", now)
 
-            # Recency: simple linear decay over 30 days
+            # Recency: exponential decay with configured half-life
             age_seconds = now - timestamp
-            recency = max(0, 1 - (age_seconds / (30 * 24 * 3600)))
+            half_life_seconds = self.recency_decay_days * 24 * 3600
+            recency = math.exp(-0.693 * age_seconds / half_life_seconds)
 
             total_score = (
                 (similarity * similarity_weight) +
@@ -168,6 +175,9 @@ class MemoryManager:
 
         # Sort by total score
         processed_results.sort(key=lambda x: x["score"], reverse=True)
+
+        # Filter by minimum score threshold
+        processed_results = [r for r in processed_results if r["score"] >= min_score]
 
         if self.event_bus:
             self.event_bus.emit_sync(Event(

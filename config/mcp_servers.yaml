@@ -1,0 +1,48 @@
+# MCP Server Definitions
+#
+# Format follows the Claude Desktop convention: command + args + optional env vars.
+# Env vars use ${VAR_NAME} syntax — resolved from the process environment (.env or export).
+#
+# optional: true  → server is skipped gracefully if a required env var is missing
+#                   or if the command fails to start (e.g. Playwright not installed yet)
+# enabled: false  → hard-disable without deleting the entry
+#
+# Install Node.js once: https://nodejs.org (npx is included)
+# First-time browser setup: npx playwright install chromium
+
+mcpServers:
+
+  # ---------------------------------------------------------------------------
+  # Fetch — fetch and parse any web page, no API key required
+  # Gives the agent: fetch(url) → cleaned text content
+  # ---------------------------------------------------------------------------
+  fetch:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-fetch"]
+    description: "Fetch and return the text content of any URL."
+
+  # ---------------------------------------------------------------------------
+  # Brave Search — web and local search via Brave Search API
+  # Gives the agent: brave_web_search(query) and brave_local_search(query)
+  # Get a free API key at: https://brave.com/search/api/
+  # Free tier: 2,000 queries/month
+  # ---------------------------------------------------------------------------
+  brave-search:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    env:
+      BRAVE_API_KEY: "${BRAVE_API_KEY}"
+    optional: true
+    description: "Web search via Brave. Set BRAVE_API_KEY in .env to enable."
+
+  # ---------------------------------------------------------------------------
+  # Playwright — full headless browser automation
+  # Gives the agent: navigate, click, fill, screenshot, extract content from
+  # any website including JavaScript-heavy SPAs.
+  # Setup: npx playwright install chromium
+  # ---------------------------------------------------------------------------
+  playwright:
+    command: npx
+    args: ["-y", "@playwright/mcp@latest", "--headless"]
+    optional: true
+    description: "Headless browser automation. Run 'npx playwright install chromium' first."

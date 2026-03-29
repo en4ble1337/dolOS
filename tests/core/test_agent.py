@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.agent import Agent
+from core.agent import Agent, _score_importance
 from core.llm import LLMGateway, LLMResponse
 from core.telemetry import EventBus
 from memory.memory_manager import MemoryManager
@@ -92,6 +92,7 @@ class TestAgent:
         mock_memory.add_memory.assert_any_call(
             text=f"User: {user_msg}",
             memory_type="episodic",
+            importance=_score_importance(user_msg),
             metadata={"session_id": session_id, "role": "user"}
         )
 
@@ -99,6 +100,7 @@ class TestAgent:
         mock_memory.add_memory.assert_any_call(
             text=f"Assistant: {reply}",
             memory_type="episodic",
+            importance=_score_importance(reply),
             metadata={"session_id": session_id, "role": "assistant"}
         )
 
@@ -268,3 +270,52 @@ class TestAgent:
             if c.kwargs.get("memory_type") == "episodic"
         ]
         assert episodic_search[0].kwargs["limit"] == 3
+
+
+class TestScoreImportance:
+    def test_score_importance_high_signals(self) -> None:
+        assert _score_importance("we decided to switch models") == 0.9
+
+    def test_score_importance_low_signals(self) -> None:
+        assert _score_importance("hello there") == 0.2
+
+    def test_score_importance_neutral(self) -> None:
+        assert _score_importance("tell me about vectors") == 0.5
+
+    @pytest.mark.asyncio
+    async def test_episodic_write_uses_importance(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+    ) -> None:
+        agent = Agent(llm=mock_llm, memory=mock_memory, event_bus=mock_event_bus)
+        message = "we decided to switch models"
+        await agent.process_message("s1", message)
+
+        # The user episodic write should use importance=0.9 (high signal)
+        mock_memory.add_memory.assert_any_call(
+            text=f"User: {message}",
+            memory_type="episodic",
+            importance=0.9,
+            metadata={"session_id": "s1", "role": "user"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_min_score_passed_to_search(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+    ) -> None:
+        agent = Agent(llm=mock_llm, memory=mock_memory, event_bus=mock_event_bus)
+        await agent.process_message("s1", "some query")
+
+        search_calls = mock_memory.search.call_args_list
+        episodic_calls = [c for c in search_calls if c.kwargs.get("memory_type") == "episodic"]
+        semantic_calls = [c for c in search_calls if c.kwargs.get("memory_type") == "semantic"]
+
+        assert episodic_calls, "Expected at least one episodic search call"
+        assert semantic_calls, "Expected at least one semantic search call"
+        assert episodic_calls[0].kwargs.get("min_score") == 0.30
+        assert semantic_calls[0].kwargs.get("min_score") == 0.35

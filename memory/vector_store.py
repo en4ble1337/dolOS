@@ -8,8 +8,10 @@ from qdrant_client.http.models import (
     Distance,
     FieldCondition,
     Filter,
+    FilterSelector,
     MatchValue,
     PointStruct,
+    Range,
     VectorParams,
 )
 
@@ -139,3 +141,27 @@ class VectorStore:
             ))
         
         return []
+
+    def delete_by_filter(
+        self,
+        collection_name: str,
+        before_timestamp: float,
+        max_importance: float,
+    ) -> int:
+        """Delete episodic entries older than before_timestamp with importance below max_importance.
+
+        Returns count of deleted points (operation_id as proxy; Qdrant does not
+        return an exact deleted count on filter-based deletes).
+        """
+        filter_condition = Filter(
+            must=[
+                FieldCondition(key="timestamp", range=Range(lt=before_timestamp)),
+                FieldCondition(key="importance", range=Range(lt=max_importance)),
+            ]
+        )
+        result = self.client.delete(
+            collection_name=collection_name,
+            points_selector=FilterSelector(filter=filter_condition),
+        )
+        # result.status == "acknowledged" on success; operation_id is a proxy count
+        return result.operation_id or 0
