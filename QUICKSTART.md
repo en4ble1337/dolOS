@@ -1,8 +1,8 @@
 # Quick Start Guide
 
-Get your local AI agent running in minutes!
+Get your local AI agent running in minutes.
 
-## Prerequisites Check
+## Prerequisites
 
 ```bash
 # 1. Check Python version (need 3.11+)
@@ -11,19 +11,20 @@ python --version
 # 2. Check Ollama is installed
 ollama --version
 
-# 3. Check Docker is running
-docker ps
-
-# 4. Check GPU is available (optional but recommended)
+# 3. Check GPU is available (optional but recommended)
 nvidia-smi
 ```
 
-## Installation Steps
+No Docker required. Qdrant runs embedded inside the Python process.
+
+---
+
+## Installation
 
 ### 1. Pull LLM Model
 
 ```bash
-# Pull Qwen2.5:32b (will use ~20GB disk space)
+# Pull Qwen2.5:32b (~20GB disk space)
 ollama pull qwen2.5:32b
 
 # Test it works
@@ -32,80 +33,102 @@ ollama run qwen2.5:32b "Hello, who are you?"
 
 ### 2. Set Up Python Environment
 
-**Option A: Using UV (Recommended - faster)**
+**Option A: UV (Recommended)**
 ```bash
 # Install UV
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create virtual environment
+# Create and activate virtual environment
 uv venv
-
-# Activate
-source .venv/bin/activate  # Linux/Mac
+source .venv/bin/activate        # Linux/Mac
 # OR
-.venv\Scripts\activate  # Windows
+.venv\Scripts\activate           # Windows
 
 # Install dependencies
 uv pip install -r requirements.txt
 ```
 
-**Option B: Using pip**
+**Option B: pip**
 ```bash
-# Create virtual environment
 python -m venv .venv
+source .venv/bin/activate        # Linux/Mac
 
-# Activate
-source .venv/bin/activate  # Linux/Mac
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Start Qdrant Vector Database
+### 3. Configure Environment
 
 ```bash
-# Start Qdrant with Docker Compose
-docker-compose up -d
-
-# Verify it's running
-curl http://localhost:6333
-
-# You should see: {"title":"qdrant - vector search engine"...}
-```
-
-### 4. Configure Environment
-
-```bash
-# Copy example env file
 cp .env.example .env
-
 # Edit with your tokens
-nano .env  # or use your preferred editor
-
-# Minimum required for testing:
-# - PRIMARY_MODEL=ollama/llama3
-# - OLLAMA_API_BASE=http://localhost:11434
-# - DATA_DIR=data/qdrant_storage
-# - Leave TELEGRAM_BOT_TOKEN and DISCORD_BOT_TOKEN commented out unless you want those channels
+nano .env
 ```
 
-`API_TOKEN` is not used by the current app and can be omitted.
+Minimum required:
+```
+PRIMARY_MODEL=ollama/qwen2.5:32b
+OLLAMA_API_BASE=http://localhost:11434
+DATA_DIR=data/qdrant_storage
+```
 
-### 5. Download Embedding Model
+- `DATA_DIR` is a local path — Qdrant runs embedded, no server needed.
+- `TELEGRAM_BOT_TOKEN` and `DISCORD_BOT_TOKEN` are optional (leave commented out unless you want those channels).
+- `API_TOKEN` is unused and can be omitted.
+
+### 4. Download Embedding Model
 
 ```bash
-# This will download the model to cache (~400MB)
+# Downloads ~400MB to cache
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
 ```
 
-## First Test Run
+### 5. Run dolOS
 
-### Test 1: Terminal Chat (Minimal Setup)
+**Option A: Direct (development)**
+```bash
+python main.py
+```
 
-Create a simple test script:
+**Option B: systemd service (production)**
 
 ```bash
-# Create test_basic.py
+# 1. Copy or symlink the repo to /opt/dolOS
+sudo ln -s /root/dolOS /opt/dolOS
+
+# 2. Ensure /opt/dolOS/.env exists and is configured
+
+# 3. Install the service
+sudo cp deploy/dolOS.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# 4. (Optional) Create a dedicated user instead of running as root:
+#    sudo useradd -r -s /bin/false -d /opt/dolOS dolos
+#    sudo chown -R dolos:dolos /opt/dolOS
+#    Then uncomment User=dolos and Group=dolos in the service file.
+
+# 5. Enable and start
+sudo systemctl enable --now dolOS
+journalctl -u dolOS -f
+```
+
+---
+
+## How Storage Works
+
+| `DATA_DIR` value       | Qdrant mode               |
+|------------------------|---------------------------|
+| `data/qdrant_storage`  | Embedded, persisted to disk |
+| `:memory:`             | Embedded, in-memory only  |
+
+Everything runs in-process — no external database server, no containers.
+
+---
+
+## Verification Tests
+
+### Test 1: Ollama
+
+```bash
 cat > test_basic.py << 'EOF'
 import asyncio
 from litellm import completion
@@ -121,50 +144,22 @@ async def test_ollama():
 asyncio.run(test_ollama())
 EOF
 
-# Run it
 python test_basic.py
 ```
 
-If you see a response, Ollama integration works! ✅
-
-### Test 2: Qdrant Memory
+### Test 2: Embedded Qdrant Memory
 
 ```bash
 cat > test_memory.py << 'EOF'
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
-import numpy as np
+from memory.vector_store import VectorStore
+from qdrant_client.http.models import Distance
 
-# Connect to Qdrant
-client = QdrantClient(host="localhost", port=6333)
-
-# Create test collection
-client.recreate_collection(
-    collection_name="test_collection",
-    vectors_config=VectorParams(size=4, distance=Distance.COSINE)
-)
-
-# Insert test vector
-client.upsert(
-    collection_name="test_collection",
-    points=[
-        PointStruct(
-            id=1,
-            vector=[0.1, 0.2, 0.3, 0.4],
-            payload={"text": "Hello world"}
-        )
-    ]
-)
-
-# Search
-results = client.search(
-    collection_name="test_collection",
-    query_vector=[0.1, 0.2, 0.3, 0.4],
-    limit=1
-)
-
+store = VectorStore(location="data/test_qdrant")
+store.create_collection("test", vector_size=4, distance=Distance.COSINE)
+store.upsert("test", vectors=[[0.1, 0.2, 0.3, 0.4]], payloads=[{"text": "Hello world"}], ids=[1])
+results = store.query("test", query_vector=[0.1, 0.2, 0.3, 0.4], limit=1)
 print(f"Found: {results[0].payload['text']}")
-print("Qdrant works! ✅")
+print("Qdrant embedded works!")
 EOF
 
 python test_memory.py
@@ -180,143 +175,32 @@ import torch
 print(f"CUDA available: {torch.cuda.is_available()}")
 print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'}")
 
-# Load model (will use GPU if available)
 model = SentenceTransformer('all-mpnet-base-v2')
-model.to('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Generate embedding
 embedding = model.encode("This is a test sentence")
 print(f"Embedding shape: {embedding.shape}")
-print(f"Device: {model.device}")
-print("Embeddings work! ✅")
+print("Embeddings work!")
 EOF
 
 python test_embeddings.py
 ```
 
-## Next Steps
-
-### Phase 1: Core Agent (You are here!)
-
-1. **Create core agent implementation**:
-   ```bash
-   # Copy starter implementation (will be provided)
-   # or build from scratch following REVERSE_ENGINEERING_ANALYSIS.md
-   ```
-
-2. **Test memory storage**:
-   - Add some facts to MEMORY.md
-   - Test hybrid search
-   - Verify citations work
-
-3. **Test LLM fallback**:
-   - Try local model (Ollama)
-   - Simulate failure
-   - Verify fallback to Claude/GPT
-
-### Phase 2: Add Channels
-
-1. **Telegram Bot**:
-   ```bash
-   # Get token from @BotFather on Telegram
-   # Add to .env
-   # Test with: python -m channels.telegram
-   ```
-
-2. **Discord Bot**:
-   ```bash
-   # Create bot on Discord Developer Portal
-   # Add to .env
-   # Test with: python -m channels.discord
-   ```
-
-3. **Terminal Interface**:
-   ```bash
-   # Polish CLI with rich formatting
-   # Add history and autocomplete
-   # Test with: python -m channels.terminal
-   ```
-
-### Phase 3: Heartbeat & Automation
-
-1. **Gmail Integration**:
-   - Set up Google Cloud project
-   - Enable Gmail API
-   - Get OAuth credentials
-   - Test email monitoring
-
-2. **Calendar Integration**:
-   - Use same Google Cloud project
-   - Enable Calendar API
-   - Test event reminders
-
-3. **Heartbeat Loop**:
-   - Configure APScheduler
-   - Test 30-minute interval
-   - Verify notifications
-
-### Phase 4: Skills & Tools
-
-1. **MCP Integration**:
-   - Install MCP Python SDK
-   - Configure MCP servers
-   - Test tool calling
-
-2. **Skill System**:
-   - Create first custom skill
-   - Test skill discovery
-   - Implement skill generator
-
-### Phase 5: Second Brain
-
-1. **FastAPI Backend**:
-   - Set up API routes
-   - Add WebSocket support
-   - Test remote access
-
-2. **Dashboard**:
-   - Build React UI (or Streamlit)
-   - Add note-taking interface
-   - Add memory search
-
-3. **Backup System**:
-   - Configure Rclone
-   - Set up Google Drive sync
-   - Test backup/restore
+---
 
 ## Troubleshooting
 
 ### Ollama not responding
 
 ```bash
-# Check if Ollama is running
-systemctl status ollama  # Linux
-brew services list  # Mac
-
-# Check logs
-journalctl -u ollama -f  # Linux
-ollama serve  # Manual start to see logs
+# Check status
+systemctl status ollama        # Linux
+brew services list             # Mac
 
 # Restart
-systemctl restart ollama  # Linux
-brew services restart ollama  # Mac
-```
+systemctl restart ollama       # Linux
+brew services restart ollama   # Mac
 
-### Qdrant connection error
-
-```bash
-# Check Docker container
-docker ps | grep qdrant
-
-# View logs
-docker logs qdrant
-
-# Restart
-docker-compose restart qdrant
-
-# Or rebuild
-docker-compose down
-docker-compose up -d
+# Start manually to see logs
+ollama serve
 ```
 
 ### GPU not detected
@@ -335,93 +219,59 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ### Import errors
 
 ```bash
-# Make sure virtual environment is activated
-which python  # Should show .venv/bin/python
+# Confirm virtual environment is active
+which python    # Should show .venv/bin/python
 
-# Reinstall dependencies
+# Reinstall
 pip install -r requirements.txt --force-reinstall
 ```
 
-## Recommended Development Workflow
+### Qdrant storage corrupted
 
-### 1. Start with Terminal Chat
+The `VectorStore` automatically detects and resets corrupted storage on startup. If you want to manually clear it:
 
-Build a simple terminal interface first:
-- Load SOUL.md and USER.md
-- Implement basic memory search
-- Test LLM responses
-- Add conversation history
+```bash
+rm -rf data/qdrant_storage
+# Restart the agent — it will recreate the storage fresh
+```
 
-### 2. Add Memory Persistence
+### dolOS service not starting
 
-Once chat works:
-- Store conversations in Qdrant
-- Implement hybrid search
-- Test memory retrieval
-- Add daily log rotation
+```bash
+# View service logs
+journalctl -u dolOS -f
 
-### 3. Add First Channel
+# Check .env is present and configured
+cat /opt/dolOS/.env
 
-Pick Telegram or Discord:
-- Implement channel adapter
-- Test bidirectional communication
-- Add session isolation
-- Test notifications
+# Test manually first
+cd /opt/dolOS && python main.py
+```
 
-### 4. Add Heartbeat
+---
 
-Start simple:
-- 30-minute timer
-- Load HEARTBEAT.md
-- Send "heartbeat" message
-- Gradually add integrations
+## Roadmap
 
-### 5. Iterate and Expand
+### Phase 1: Core Agent
+- Review `REVERSE_ENGINEERING_ANALYSIS.md` for architecture
+- Test components (Ollama, embedded Qdrant, embeddings)
+- Build core agent
 
-- Add more channels
-- Add more integrations
-- Build dashboard
-- Optimize performance
+### Phase 2: Channels
+- Telegram (`TELEGRAM_BOT_TOKEN` in `.env`)
+- Discord (`DISCORD_BOT_TOKEN` in `.env`)
 
-## Getting Help
+### Phase 3: Heartbeat & Automation
+- Gmail OAuth integration
+- Google Calendar integration
+- APScheduler heartbeat loop
 
-### Documentation
-- Read `REVERSE_ENGINEERING_ANALYSIS.md` for architecture details
-- Check `README.md` for comprehensive guide
-- Review OpenClaw docs at https://docs.openclaw.ai/
+### Phase 4: Skills & Tools
+- MCP integration
+- Custom skill authoring
+- Skill auto-generation
 
-### Resources
-- LiteLLM: https://docs.litellm.ai/
-- Qdrant: https://qdrant.tech/documentation/
-- sentence-transformers: https://www.sbert.net/
-- Ollama: https://ollama.ai/
-
-### Common Issues
-
-**"Model not found"**
-- Run `ollama list` to see installed models
-- Pull model: `ollama pull qwen2.5:32b`
-
-**"CUDA out of memory"**
-- Reduce batch size in config
-- Use smaller model (qwen2.5:14b)
-- Monitor with `nvidia-smi`
-
-**"Qdrant connection refused"**
-- Check Docker: `docker ps`
-- Check port: `curl http://localhost:6333`
-- Restart: `docker-compose restart qdrant`
-
-## What's Next?
-
-You now have the foundation. Next steps:
-
-1. ✅ **Review** `REVERSE_ENGINEERING_ANALYSIS.md` to understand architecture
-2. ✅ **Test** basic components (Ollama, Qdrant, embeddings)
-3. 🔨 **Build** core agent implementation
-4. 🔨 **Add** your first channel (Telegram recommended)
-5. 🔨 **Implement** heartbeat system
-6. 🔨 **Create** skills and tools
-7. 🔨 **Build** second brain dashboard
-
-Good luck! 🚀
+### Phase 5: Second Brain Dashboard
+- FastAPI backend + WebSocket
+- React UI for memory exploration
+- Backup via Rclone / Google Drive

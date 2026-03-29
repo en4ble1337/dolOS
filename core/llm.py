@@ -56,11 +56,17 @@ class LLMGateway:
                 "model": model,
                 "messages": messages,
                 "tools": tools,
+                "timeout": self.settings.llm_timeout,
             }
             if api_base:
                 kwargs["api_base"] = api_base
             if is_ollama_remapped:
                 kwargs["api_key"] = "ollama"
+                # Disable qwen3 thinking mode to avoid long pauses.
+                # Users can re-enable via OLLAMA_EXTRA_BODY or env config if desired.
+                if "qwen3" in model.lower():
+                    kwargs.setdefault("extra_body", {})
+                    kwargs["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
 
             tool_names = [t["function"]["name"] for t in tools] if tools else []
             logger.debug(f"[LLM_REQUEST] model={model} | tools_sent={bool(tools)} | tools={tool_names}")

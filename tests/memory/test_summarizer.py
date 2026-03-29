@@ -185,6 +185,28 @@ class TestSummarizeSession:
         assert EventType.SUMMARIZATION_COMPLETE in event_types
 
 
+    @pytest.mark.asyncio
+    async def test_summarize_does_not_use_summary_phrase_as_query(
+        self, summarizer: ConversationSummarizer, mock_memory: MagicMock
+    ) -> None:
+        """The search query must NOT be 'conversation summary' — that phrase biases
+        vector search toward summary-like text and excludes ordinary chat turns."""
+        now = time.time()
+        mock_memory.search.return_value = [
+            {"text": "User: How do I set up FastAPI?", "timestamp": now - 300, "metadata": {}},
+            {"text": "Assistant: Install it with pip install fastapi.", "timestamp": now - 200, "metadata": {}},
+            {"text": "User: What about uvicorn?", "timestamp": now - 100, "metadata": {}},
+        ]
+
+        await summarizer.summarize_session("s1", "t1")
+
+        call_kwargs = mock_memory.search.call_args.kwargs
+        assert call_kwargs["query"] != "conversation summary", (
+            "summarize_session must not use 'conversation summary' as the search query "
+            "because it biases vector retrieval away from ordinary chat turns."
+        )
+
+
 class TestGetSessionSummary:
     def test_summary_exists(
         self, summarizer: ConversationSummarizer, mock_memory: MagicMock

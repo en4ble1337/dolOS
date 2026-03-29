@@ -143,7 +143,7 @@ When the switch fires:
 3. The alert fires **once only** — not on every subsequent tick
 4. If no notifier is configured, log CRITICAL (existing behavior)
 
-**Key constraint:** If APScheduler dies completely, `DeadManSwitch.check()` will never be called — this only catches a degraded/slow scheduler. A fully frozen event loop requires an OS-level process manager (systemd, Docker restart policy) — explicitly out of scope.
+**Key constraint:** If APScheduler dies completely, `DeadManSwitch.check()` will never be called — this only catches a degraded/slow scheduler. A fully frozen event loop requires an OS-level process manager (systemd) — explicitly out of scope.
 
 ---
 

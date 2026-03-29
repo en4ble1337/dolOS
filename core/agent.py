@@ -12,6 +12,7 @@ from memory.memory_manager import MemoryManager
 from skills.executor import SkillExecutor
 
 if TYPE_CHECKING:
+    from memory.combined_extractor import CombinedTurnExtractor
     from memory.lesson_extractor import LessonExtractor
     from memory.semantic_extractor import SemanticExtractor
     from memory.summarizer import ConversationSummarizer
@@ -19,6 +20,20 @@ if TYPE_CHECKING:
 _DEFAULT_LESSONS_PATH = "data/LESSONS.md"
 
 logger = logging.getLogger(__name__)
+
+
+def _score_importance(text: str) -> float:
+    """Heuristic importance score for an episodic memory (0.0–1.0)."""
+    _HIGH = ["decision:", "remember:", "important:", "never ", "always ",
+             "decided", "switched", "replaced", "changed", "critical", "must "]
+    _LOW  = ["hello", "hi ", "thanks", "thank you", "ok", "sure",
+             "got it", "sounds good", "great", "awesome", "cool"]
+    lower = text.lower()
+    if any(s in lower for s in _HIGH):
+        return 0.9
+    if any(s in lower for s in _LOW):
+        return 0.2
+    return 0.5
 
 _REACT_TAG_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 _THINK_TAG_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
@@ -63,6 +78,7 @@ class Agent:
         semantic_extractor: Optional["SemanticExtractor"] = None,
         summarizer: Optional["ConversationSummarizer"] = None,
         lesson_extractor: Optional["LessonExtractor"] = None,
+        combined_extractor: Optional["CombinedTurnExtractor"] = None,
     ) -> None:
         self.llm = llm
         self.memory = memory
@@ -71,6 +87,7 @@ class Agent:
         self.semantic_extractor = semantic_extractor
         self.summarizer = summarizer
         self.lesson_extractor = lesson_extractor
+        self.combined_extractor = combined_extractor
         self._lessons_path = _DEFAULT_LESSONS_PATH
 
     async def process_message(self, session_id: str, message: str) -> str:
@@ -85,6 +102,7 @@ class Agent:
             self.memory.add_memory(
                 text=user_text,
                 memory_type="episodic",
+                importance=_score_importance(message),
                 metadata={"session_id": session_id, "role": "user"},
             )
 
@@ -98,10 +116,10 @@ class Agent:
                     episodic_limit = 3
 
             episodic_results = self.memory.search(
-                query=message, memory_type="episodic", limit=episodic_limit
+                query=message, memory_type="episodic", limit=episodic_limit, min_score=0.30
             )
             semantic_results = self.memory.search(
-                query=message, memory_type="semantic", limit=3
+                query=message, memory_type="semantic", limit=3, min_score=0.35
             )
 
             episodic_block = "\n".join([r["text"] for r in episodic_results])
@@ -112,6 +130,12 @@ class Agent:
             if os.path.exists(soul_path):
                 with open(soul_path, "r", encoding="utf-8") as f:
                     soul_content = f.read()
+
+            if len(soul_content) > 8000:
+                logger.warning(
+                    "SOUL.md is large (%d chars). Consider splitting into SOUL_CORE.md + SOUL_EXTENDED.md "
+                    "to reduce prompt token cost.", len(soul_content)
+                )
 
             lessons_content = ""
             if os.path.exists(self._lessons_path):
@@ -244,6 +268,15 @@ class Agent:
                             args = {}
                         result = await self.skill_executor.execute(fn_name, args, trace_id) if self.skill_executor else "Error: SkillExecutor not configured."
                         messages.append({"role": "tool", "tool_call_id": tc.id, "name": fn_name, "content": str(result)})
+                        # Store tool result summary in episodic memory
+                        _result_preview = str(result)[:300]
+                        _tool_summary = f"Tool {fn_name} called. Result: {_result_preview}"
+                        self.memory.add_memory(
+                            text=_tool_summary,
+                            memory_type="episodic",
+                            importance=0.7,
+                            metadata={"session_id": session_id, "role": "tool", "tool_name": fn_name},
+                        )
                     continue  # loop back with tool results
 
                 # --- ReAct XML fallback (for models that don't support native tool calling) ---
@@ -256,6 +289,14 @@ class Agent:
                         result = await self.skill_executor.execute(fn_name, args, trace_id)
                         tool_results.append(f"<tool_result name=\"{fn_name}\">{result}</tool_result>")
                         logger.info(f"[REACT] {fn_name}({args}) → {str(result)[:120]}")
+                        _result_preview = str(result)[:300]
+                        _tool_summary = f"Tool {fn_name} called. Result: {_result_preview}"
+                        self.memory.add_memory(
+                            text=_tool_summary,
+                            memory_type="episodic",
+                            importance=0.7,
+                            metadata={"session_id": session_id, "role": "tool", "tool_name": fn_name},
+                        )
                     messages.append({"role": "user", "content": "\n".join(tool_results) + "\nNow give the final answer to the user based on the above results."})
                     continue  # loop back so model can compose final answer
 
@@ -268,6 +309,7 @@ class Agent:
                     self.memory.add_memory(
                         text=assistant_text,
                         memory_type="episodic",
+                        importance=_score_importance(content),
                         metadata={"session_id": session_id, "role": "assistant"},
                     )
 
@@ -281,6 +323,7 @@ class Agent:
             self.memory.add_memory(
                 text=f"Assistant: {fallback_content}",
                 memory_type="episodic",
+                importance=_score_importance(fallback_content),
                 metadata={"session_id": session_id, "role": "assistant"},
             )
             return fallback_content
@@ -292,10 +335,21 @@ class Agent:
         self, session_id: str, user_message: str, assistant_response: str, trace_id: str
     ) -> None:
         """Fire semantic extraction and summarization as non-blocking background tasks."""
-        if self.semantic_extractor:
+        if self.combined_extractor:
+            # Single LLM call for both facts + lessons
             asyncio.create_task(
-                self._run_semantic_extraction(session_id, user_message, assistant_response, trace_id)
+                self._run_combined_extraction(session_id, user_message, assistant_response, trace_id)
             )
+        else:
+            # Fallback: separate extractors
+            if self.semantic_extractor:
+                asyncio.create_task(
+                    self._run_semantic_extraction(session_id, user_message, assistant_response, trace_id)
+                )
+            if self.lesson_extractor:
+                asyncio.create_task(
+                    self._run_lesson_extraction(session_id, user_message, assistant_response, trace_id)
+                )
 
         if self.summarizer:
             should_summarize = self.summarizer.increment_turn(session_id)
@@ -304,15 +358,29 @@ class Agent:
                     self._run_summarization(session_id, trace_id)
                 )
 
-        if self.lesson_extractor:
-            asyncio.create_task(
-                self._run_lesson_extraction(session_id, user_message, assistant_response, trace_id)
+    async def _run_combined_extraction(
+        self, session_id: str, user_message: str, assistant_response: str, trace_id: str
+    ) -> None:
+        start = asyncio.get_event_loop().time()
+        try:
+            await self.combined_extractor.extract_and_store(  # type: ignore[union-attr]
+                user_message=user_message,
+                assistant_response=assistant_response,
+                session_id=session_id,
+                trace_id=trace_id,
             )
+            elapsed_ms = (asyncio.get_event_loop().time() - start) * 1000
+            logger.debug("CombinedTurnExtractor completed in %.0fms", elapsed_ms)
+            if elapsed_ms > 3000:
+                logger.warning("CombinedTurnExtractor took %.0fms — may race with next user query", elapsed_ms)
+        except Exception as e:
+            logger.warning("Combined extraction failed: %s", e)
 
     async def _run_semantic_extraction(
         self, session_id: str, user_message: str, assistant_response: str, trace_id: str
     ) -> None:
         """Background task: extract facts from this turn into semantic memory."""
+        start = asyncio.get_event_loop().time()
         try:
             await self.semantic_extractor.extract_and_store(  # type: ignore[union-attr]
                 user_message=user_message,
@@ -320,16 +388,25 @@ class Agent:
                 session_id=session_id,
                 trace_id=trace_id,
             )
+            elapsed_ms = (asyncio.get_event_loop().time() - start) * 1000
+            logger.debug("SemanticExtractor completed in %.0fms", elapsed_ms)
+            if elapsed_ms > 3000:
+                logger.warning("SemanticExtractor took %.0fms — may race with next user query", elapsed_ms)
         except Exception as e:
             logger.warning("Semantic extraction failed: %s", e)
 
     async def _run_summarization(self, session_id: str, trace_id: str) -> None:
         """Background task: summarize this session's conversation."""
+        start = asyncio.get_event_loop().time()
         try:
             await self.summarizer.summarize_session(  # type: ignore[union-attr]
                 session_id=session_id,
                 trace_id=trace_id,
             )
+            elapsed_ms = (asyncio.get_event_loop().time() - start) * 1000
+            logger.debug("Summarization completed in %.0fms", elapsed_ms)
+            if elapsed_ms > 3000:
+                logger.warning("Summarization took %.0fms — may race with next user query", elapsed_ms)
         except Exception as e:
             logger.warning("Summarization failed: %s", e)
 
@@ -337,6 +414,7 @@ class Agent:
         self, session_id: str, user_message: str, assistant_response: str, trace_id: str
     ) -> None:
         """Background task: extract behavioural lessons from this turn."""
+        start = asyncio.get_event_loop().time()
         try:
             await self.lesson_extractor.extract_and_store(  # type: ignore[union-attr]
                 user_message=user_message,
@@ -344,5 +422,9 @@ class Agent:
                 session_id=session_id,
                 trace_id=trace_id,
             )
+            elapsed_ms = (asyncio.get_event_loop().time() - start) * 1000
+            logger.debug("LessonExtractor completed in %.0fms", elapsed_ms)
+            if elapsed_ms > 3000:
+                logger.warning("LessonExtractor took %.0fms — may race with next user query", elapsed_ms)
         except Exception as e:
             logger.warning("Lesson extraction failed: %s", e)

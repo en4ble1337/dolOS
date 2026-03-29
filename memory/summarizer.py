@@ -71,9 +71,13 @@ class ConversationSummarizer:
 
         start = time.time()
         try:
-            # Retrieve recent episodic memories for this session
+            # Retrieve recent episodic memories for this session.
+            # Use a broad conversational anchor (not "conversation summary") so
+            # that the vector search does not bias toward summary-like text and
+            # instead returns ALL turns for the session.  The filter_metadata
+            # scope by session_id ensures we only see this session's turns.
             memories = self.memory.search(
-                query="conversation summary",
+                query="user assistant conversation exchange message",
                 memory_type="episodic",
                 limit=self.turn_threshold * 2,
                 filter_metadata={"session_id": session_id},

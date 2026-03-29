@@ -4,8 +4,11 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 
+import os
+
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from api.routes.chat import chat_router
 from api.routes.health import router as health_router
@@ -23,21 +26,25 @@ from core.config import Settings
 from core.heartbeat import HeartbeatSystem
 from core.llm import LLMGateway
 from core.telemetry import EventBus, EventCollector
+from memory.combined_extractor import CombinedTurnExtractor
 from memory.lesson_extractor import LessonExtractor
 from memory.memory_manager import MemoryManager
 from memory.semantic_extractor import SemanticExtractor
+from memory.static_loader import StaticFileLoader
 from memory.summarizer import ConversationSummarizer
 from memory.vector_store import VectorStore
+from heartbeat.integrations.memory_maintenance import MemoryMaintenanceTask
 from heartbeat.integrations.reflection_task import ReflectionTask
 from heartbeat.integrations.system_health import SystemHealthProbe
 from heartbeat.integrations.deadman_switch import DeadManSwitch
 import skills.local.filesystem  # noqa: F401 — registers read_file, write_file
 import skills.local.system  # noqa: F401 — registers run_command, run_code
-import skills.local.meta  # noqa: F401 — registers create_skill
+import skills.local.meta  # noqa: F401 — registers create_skill, fix_skill
 import skills.local.memory as _memory_skill  # registers search_memory
 import skills.local.generated  # noqa: F401 — auto-loads agent-generated skills
 from skills.executor import SkillExecutor
 from skills.registry import _default_registry as registry
+from tools.mcp_loader import MCPServerManager
 
 # Settings must be loaded first so log_level is available for basicConfig
 settings = Settings()
@@ -58,8 +65,18 @@ collector = EventCollector(event_bus, "agent.db")
 llm = LLMGateway(settings=settings, event_bus=event_bus)
 logger.info("Initializing Memory Manager & Downloading Embedding Models (this may take ~1 minute on first run)...")
 vector_store = VectorStore(location=settings.data_dir)
-memory = MemoryManager(vector_store=vector_store, event_bus=event_bus)
+memory = MemoryManager(
+    vector_store=vector_store,
+    event_bus=event_bus,
+    recency_decay_days=settings.memory_recency_decay_days,
+)
 _memory_skill.set_memory_manager(memory)
+
+# Index static knowledge files into semantic memory (Gap 1)
+logger.info("Indexing static knowledge files into semantic memory...")
+_static_loader = StaticFileLoader(memory)
+_static_loader.index_file("data/USER.md", source_tag="user_profile")
+_static_loader.index_file("data/MEMORY.md", source_tag="long_term_decisions")
 executor = SkillExecutor(registry=registry, event_bus=event_bus)
 semantic_extractor = SemanticExtractor(
     llm=llm,
@@ -78,6 +95,12 @@ lesson_extractor = LessonExtractor(
     memory=memory,
     event_bus=event_bus,
 ) if settings.lesson_extraction_enabled else None
+combined_extractor = CombinedTurnExtractor(
+    llm=llm,
+    semantic_extractor=semantic_extractor,
+    lesson_extractor=lesson_extractor,
+    event_bus=event_bus,
+) if (semantic_extractor is not None and lesson_extractor is not None) else None
 agent = Agent(
     llm=llm,
     memory=memory,
@@ -86,6 +109,7 @@ agent = Agent(
     semantic_extractor=semantic_extractor,
     summarizer=summarizer,
     lesson_extractor=lesson_extractor,
+    combined_extractor=combined_extractor,
 )
 heartbeat = HeartbeatSystem(event_bus=event_bus)
 alert_notifier = AlertNotifier(settings)
@@ -118,6 +142,20 @@ async def lifespan(app: FastAPI):
 
     app.state.telemetry_task = asyncio.create_task(process_telemetry())
 
+    # Connect MCP servers (web search, fetch, browser)
+    if settings.mcp_enabled:
+        logger.info("Connecting MCP servers (web search, fetch, browser)...")
+        mcp_manager = MCPServerManager(
+            config_path=settings.mcp_servers_config,
+            event_bus=event_bus,
+            registry=registry,
+        )
+        try:
+            await mcp_manager.connect_all()
+            app.state.mcp_manager = mcp_manager
+        except Exception as e:
+            logger.warning("MCP startup failed — continuing without MCP servers: %s", e)
+
     # Start Heartbeat
     logger.info("Starting up Proactive Heartbeat System...")
     heartbeat.register_default_tasks(
@@ -130,6 +168,16 @@ async def lifespan(app: FastAPI):
         consolidation_threshold=settings.lesson_consolidation_threshold,
     )
     heartbeat.register_integration(reflection_task)
+    # Memory maintenance: weekly eviction of old low-importance episodic memories (Gap 10)
+    memory_maintenance = MemoryMaintenanceTask(event_bus=event_bus, vector_store=vector_store)
+    heartbeat.register_task(
+        name="integration.memory_maintenance",
+        func=memory_maintenance.check,
+        trigger="cron",
+        day_of_week="sun",
+        hour=2,
+        minute=0,
+    )
     heartbeat.start()
 
     # Inject dependencies into FastAPI request state
@@ -145,6 +193,8 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down Agent Backend...")
+    if hasattr(app.state, "mcp_manager"):
+        await app.state.mcp_manager.close_all()
     heartbeat.shutdown()
     if hasattr(app.state, "telemetry_task"):
         app.state.telemetry_task.cancel()
@@ -159,6 +209,13 @@ app.include_router(memory_router, prefix="/api")
 app.include_router(obs_router, prefix="/api")
 app.include_router(skills_router, prefix="/api")
 app.include_router(telemetry_router, prefix="/api")
+
+# Serve the React dashboard from ui/dist if it has been built.
+# API routes above take priority; this is a catch-all for everything else.
+_ui_dist = os.path.join(os.path.dirname(__file__), "ui", "dist")
+if os.path.isdir(_ui_dist):
+    app.mount("/", StaticFiles(directory=_ui_dist, html=True), name="ui")
+    logger.info("Dashboard available at http://localhost:8000/")
 
 
 def _cancel_background_tasks(background_tasks: list, server_task: asyncio.Task) -> None:

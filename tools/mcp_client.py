@@ -77,14 +77,14 @@ class MCPClientWrapper:
         tools_result = await self.list_tools()
         for tool in tools_result.tools:
             # Create a closure to capture tool.name properly
-            def make_tool_func(tool_name: str) -> Any:
+            def make_tool_func(tool_name: str, tool_description: str | None) -> Any:
                 async def mcp_tool_wrapper(**kwargs: Any) -> Any:
                     return await self.call_tool(tool_name, kwargs)
                 mcp_tool_wrapper.__name__ = tool_name
-                mcp_tool_wrapper.__doc__ = tool.description
+                mcp_tool_wrapper.__doc__ = tool_description
                 return mcp_tool_wrapper
 
-            func = make_tool_func(tool.name)
+            func = make_tool_func(tool.name, tool.description)
             
             self.registry.register(
                 name=tool.name,

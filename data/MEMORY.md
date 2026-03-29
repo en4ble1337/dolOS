@@ -30,13 +30,12 @@ This file stores long-term facts, decisions, and important information that shou
 - Better performance for vector similarity search
 - Easier to scale if needed
 - Excellent Python SDK
-- Docker deployment is straightforward
+- Embedded mode runs in-process — no server, no containers required
 - Production-grade features (snapshots, clustering)
 
 **Trade-offs**:
-- Requires Docker container (vs SQLite single file)
-- More setup complexity
-- Higher resource usage
+- Slightly higher resource usage than SQLite
+- Embedded storage path must be managed (auto-resets on corruption)
 
 #### 2026-02-13: LiteLLM as LLM Router
 **Decision**: Use LiteLLM for unified LLM interface
@@ -57,7 +56,7 @@ Fallback 2: openai/gpt-4-turbo
 ## Project Architecture
 
 ### Memory System Design
-- **Vector DB**: Qdrant running on localhost:6333
+- **Vector DB**: Qdrant embedded (in-process, persisted to `DATA_DIR`)
 - **Embedding Model**: all-mpnet-base-v2 (768 dimensions, GPU-accelerated)
 - **Search Strategy**: Hybrid (70% vector, 30% keyword)
 - **Chunk Size**: 400 tokens with 80 token overlap

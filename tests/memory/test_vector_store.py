@@ -1,3 +1,4 @@
+import time
 from typing import Any
 
 import pytest
@@ -77,6 +78,44 @@ def test_query_with_metadata_filter(vector_store: VectorStore) -> None:
 
     assert len(results) == 1
     assert results[0].payload["id"] == "doc2"
+
+
+def test_delete_by_filter_removes_old_low_importance(vector_store: VectorStore) -> None:
+    """Only old + low-importance points should be deleted; others remain."""
+    collection_name = "test_delete_filter"
+    vector_store.create_collection(collection_name, 3)
+
+    now = time.time()
+    old_ts = now - 10_000   # well in the past
+    recent_ts = now          # right now
+
+    # Point 1: old + low importance  → should be deleted
+    # Point 2: old + high importance → should remain
+    # Point 3: recent + low importance → should remain
+    vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]
+    payloads: Any = [
+        {"text": "old low", "timestamp": old_ts, "importance": 0.1},
+        {"text": "old high", "timestamp": old_ts, "importance": 0.9},
+        {"text": "recent low", "timestamp": recent_ts, "importance": 0.1},
+    ]
+    ids: Any = [10, 20, 30]
+    vector_store.upsert(collection_name, vectors, payloads, ids)
+
+    # Delete entries older than (now - 1 second) with importance < 0.3
+    cutoff = now - 1
+    vector_store.delete_by_filter(
+        collection_name=collection_name,
+        before_timestamp=cutoff,
+        max_importance=0.3,
+    )
+
+    # Query all remaining points with a broad vector search
+    remaining = vector_store.query(collection_name, [0.1, 0.2, 0.3], limit=10)
+    remaining_texts = [r.payload.get("text") for r in remaining]
+
+    assert "old low" not in remaining_texts, "old+low-importance point should have been deleted"
+    assert "old high" in remaining_texts, "old+high-importance point should remain"
+    assert "recent low" in remaining_texts, "recent+low-importance point should remain"
 
 
 def test_file_backed_persistence(tmp_path: Any) -> None:
