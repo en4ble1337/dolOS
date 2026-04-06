@@ -1,9 +1,11 @@
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.agent import Agent
+from core.commands import CommandRouter
 from core.telemetry import Event, EventBus, EventType, reset_trace_id, set_trace_id
 
 chat_router = APIRouter()
@@ -34,11 +36,17 @@ def get_event_bus(request: Request) -> EventBus:
     return bus
 
 
+def get_command_router(request: Request) -> Optional[CommandRouter]:
+    """Retrieve the optional CommandRouter from the app state."""
+    return getattr(request.app.state, "command_router", None)
+
+
 @chat_router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(
     data: ChatRequest,
     agent: Agent = Depends(get_agent),
     event_bus: EventBus = Depends(get_event_bus),
+    command_router: Optional[CommandRouter] = Depends(get_command_router),
 ) -> ChatResponse:
     """Process a chat message via HTTP REST."""
 
@@ -54,6 +62,12 @@ async def chat_endpoint(
                 payload={"session_id": data.session_id, "length": len(data.message)},
             )
         )
+
+        # Intercept operator commands before sending to the agent
+        if command_router is not None:
+            cmd_result = await command_router.handle(data.session_id, data.message)
+            if cmd_result is not None:
+                return ChatResponse(content=cmd_result)
 
         reply = await agent.process_message(
             session_id=data.session_id,

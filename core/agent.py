@@ -21,6 +21,9 @@ _DEFAULT_LESSONS_PATH = "data/LESSONS.md"
 
 logger = logging.getLogger(__name__)
 
+# Default context window size used when Settings is not available.
+_DEFAULT_CONTEXT_WINDOW = 32768
+
 
 def _score_importance(text: str) -> float:
     """Heuristic importance score for an episodic memory (0.0–1.0)."""
@@ -89,6 +92,8 @@ class Agent:
         self.lesson_extractor = lesson_extractor
         self.combined_extractor = combined_extractor
         self._lessons_path = _DEFAULT_LESSONS_PATH
+        # Per-session cumulative token counters: {session_id: total_tokens}
+        self._session_tokens: dict[str, int] = {}
 
     async def process_message(self, session_id: str, message: str) -> str:
         """Process an incoming message from a user/channel."""
@@ -248,6 +253,30 @@ class Agent:
                 content = response.content or ""
                 logger.info(f"[LLM_RAW] tool_calls={bool(response.tool_calls)} | has_tool_tag={'<tool_call>' in content} | content={content[:300]!r}")
 
+                # Track cumulative token usage for this session.
+                # Use int() guarded access so plain MagicMock responses (used in tests) don't crash.
+                _in_tok = getattr(response, "input_tokens", 0)
+                _out_tok = getattr(response, "output_tokens", 0)
+                input_tokens_int: int = _in_tok if isinstance(_in_tok, int) else 0
+                output_tokens_int: int = _out_tok if isinstance(_out_tok, int) else 0
+                turn_tokens: int = input_tokens_int + output_tokens_int
+                self._session_tokens[session_id] = (
+                    self._session_tokens.get(session_id, 0) + turn_tokens
+                )
+                _settings = getattr(self.llm, "settings", None)
+                _cw = getattr(_settings, "model_context_window", _DEFAULT_CONTEXT_WINDOW)
+                context_window: int = _cw if isinstance(_cw, int) else _DEFAULT_CONTEXT_WINDOW
+                _wt = getattr(_settings, "token_budget_warn_threshold", 0.8)
+                warn_threshold: float = _wt if isinstance(_wt, (int, float)) else 0.8
+                if turn_tokens > 0 and (input_tokens_int / context_window) >= warn_threshold:
+                    logger.warning(
+                        "[TOKEN_BUDGET] Session %s: %d/%d input tokens (%.0f%% of context window)",
+                        session_id,
+                        input_tokens_int,
+                        context_window,
+                        100 * input_tokens_int / context_window,
+                    )
+
                 # --- Native function calling path ---
                 if response.tool_calls:
                     messages.append({
@@ -353,6 +382,23 @@ class Agent:
 
         if self.summarizer:
             should_summarize = self.summarizer.increment_turn(session_id)
+            # Also trigger summarization when approaching the token budget threshold
+            if not should_summarize:
+                _settings = getattr(self.llm, "settings", None)
+                _cw2 = getattr(_settings, "model_context_window", _DEFAULT_CONTEXT_WINDOW)
+                _sum_cw: int = _cw2 if isinstance(_cw2, int) else _DEFAULT_CONTEXT_WINDOW
+                _st = getattr(_settings, "token_budget_summarize_threshold", 0.7)
+                summarize_token_threshold: float = _st if isinstance(_st, (int, float)) else 0.7
+                session_total = self._session_tokens.get(session_id, 0)
+                if session_total > 0 and (session_total / _sum_cw) >= summarize_token_threshold:
+                    logger.info(
+                        "[TOKEN_BUDGET] Triggering summarization for session %s: "
+                        "%d tokens (%.0f%% of context window)",
+                        session_id,
+                        session_total,
+                        100 * session_total / _sum_cw,
+                    )
+                    should_summarize = True
             if should_summarize:
                 asyncio.create_task(
                     self._run_summarization(session_id, trace_id)

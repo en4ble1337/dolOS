@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from core.telemetry import Event, EventBus, EventType
+from skills.bash_validator import validate_bash_command
 
 
 # Maximum output length to protect LLM context windows
@@ -88,6 +89,35 @@ class SandboxExecutor:
         """
         policy = policy or self.default_policy
         start_time = time.time()
+
+        # Pre-flight safety check — block dangerous patterns before subprocess
+        validation = validate_bash_command(command)
+        if not validation.is_safe:
+            error_msg = f"Command blocked by safety validator: {validation.reason}"
+            if self.event_bus:
+                await self.event_bus.emit(
+                    Event(
+                        event_type=EventType.TOOL_ERROR,
+                        component="skills.sandbox",
+                        trace_id=trace_id or "pending",
+                        payload={
+                            "action": "execute_command",
+                            "command": command,
+                            "error": error_msg,
+                            "blocked": True,
+                        },
+                        duration_ms=0,
+                        success=False,
+                    )
+                )
+            return {
+                "output": error_msg,
+                "exit_code": -1,
+                "truncated": False,
+                "duration_ms": 0,
+                "success": False,
+                "blocked": True,
+            }
 
         # Emit TOOL_INVOKE event
         if self.event_bus:

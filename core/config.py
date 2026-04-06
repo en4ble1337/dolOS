@@ -26,5 +26,19 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     mcp_enabled: bool = Field(default=True)
     mcp_servers_config: str = Field(default="config/mcp_servers.yaml")
+    model_context_window: int = Field(
+        default=32768,
+        description="Context window size in tokens for the primary model. "
+                    "Used to warn when approaching the limit.",
+    )
+    token_budget_warn_threshold: float = Field(
+        default=0.8,
+        description="Fraction of context window at which a warning is logged (0.0–1.0).",
+    )
+    token_budget_summarize_threshold: float = Field(
+        default=0.7,
+        description="Fraction of context window at which summarization is triggered "
+                    "(takes effect alongside the turn-count threshold).",
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
