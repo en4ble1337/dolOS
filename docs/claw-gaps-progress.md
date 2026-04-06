@@ -85,6 +85,99 @@ Any agent or developer resuming this work should:
 
 ---
 
+## Manual Testing Checklist
+
+> Run these after all phases are merged into `feature/claw-gaps` (or `main`).
+> Each item maps to a gap. Tick them off as you go.
+
+### Phase 1
+
+- [ ] **Gap 7 — Bash Validator**
+  - Start the agent (`python main.py` or terminal channel)
+  - Ask: *"Run the command: rm -rf /"*
+  - Expected: agent returns a blocked/error message, command never executes
+
+- [ ] **Gap 9 — Token Budget**
+  - Check the agent log (`INFO`/`WARNING` level) after a few back-and-forth turns
+  - Expected: see `[TOKEN_BUDGET]` log lines with token counts
+  - Optionally set `MODEL_CONTEXT_WINDOW=1000` in `.env`, send a message, check for a `WARNING` about approaching the limit
+
+- [ ] **Gap 5 — Session K/V**
+  - Ask the agent: *"Remember that my preferred language is Python"*
+  - The agent should call `set_session_memory` (visible in logs or tool trace)
+  - Ask: *"What programming language do I prefer?"*
+  - Expected: agent retrieves it via `get_session_memory` and answers correctly
+
+- [ ] **Gap 10 — Operator Commands**
+  - In terminal or via API, send: `/skills list`
+  - Expected: list of registered skills returned immediately, no LLM call in logs
+  - Send: `/doctor`
+  - Expected: health check showing ✓ for LLM, Memory, Skill Executor
+  - Send: `/memory search Python`
+  - Expected: search results from episodic/semantic memory (empty is fine if fresh)
+  - Send: `/help`
+  - Expected: command list displayed
+
+### Phase 2
+
+- [ ] **Gap 2 — Typed Tool Contracts**
+  - Send: `/skills list` — check that descriptions are shown
+  - Confirm in logs that `is_read_only` and `concurrency_safe` metadata appears in skill registration output
+
+- [ ] **Gap 14 — Prompt Layers**
+  - Enable `DEBUG` log level (`LOG_LEVEL=DEBUG` in `.env`)
+  - Send any message and check logs for `[PROMPT_SECTION]` telemetry showing per-section character counts
+
+- [ ] **Gap 13 — Durable Transcripts**
+  - Have a short conversation (3+ turns)
+  - Check `data/transcripts/` for a `.jsonl` file matching your session ID
+  - File should contain user, assistant, and tool_call entries
+  - Send: `/resume` — expected: list of recent sessions
+
+### Phase 3
+
+- [ ] **Gap 1 — Permission Layer**
+  - No UI action needed — verified by automated tests
+  - Optionally: review logs to confirm `PermissionPolicy` is applied on startup
+
+- [ ] **Gap 4 — Dynamic Tool Routing**
+  - Register 11+ skills (or lower the threshold in config temporarily)
+  - Ask a question clearly related to one skill (e.g. "read my file")
+  - Check logs for `[TOOL_ROUTING]` showing fewer tools sent to LLM than total registered
+
+- [ ] **Gap 11 — Parallel Read-Only Tools**
+  - Ask a question that triggers multiple reads (e.g. "what does X do and what does Y contain?")
+  - Check logs for `asyncio.gather` parallel execution of read-only tool calls
+
+- [ ] **Gap 12 — Hook Framework**
+  - No UI action needed for core functionality
+  - Optionally: register a test hook in `main.py` that logs `pre_tool_use` events and verify it fires
+
+- [ ] **Gap 15 — Working Memory Files**
+  - Create `data/CURRENT_TASK.md` with some text
+  - Send a message and check that the content appears in the system prompt (via `DEBUG` log)
+
+### Phase 4
+
+- [ ] **Gap 3 — Plan Mode**
+  - Send: `/plan`
+  - Ask the agent to do something destructive (e.g. "delete all log files")
+  - Expected: agent proposes a numbered plan, does NOT execute
+  - Send: `/approve`
+  - Expected: agent executes the plan
+
+- [ ] **Gap 8 — MCP Server**
+  - Start dolOS with `--mcp` flag: `python main.py --mcp`
+  - From another terminal, connect an MCP client (e.g. `npx @modelcontextprotocol/inspector`)
+  - Expected: dolOS skills appear as callable MCP tools
+
+- [ ] **Gap 6 — Subagents**
+  - Ask the agent: *"Spawn a subagent to list files in the current directory"*
+  - Expected: agent calls `spawn_subagent`, result returned inline
+  - Check logs for `[SUBAGENT]` trace showing scoped permission policy
+
+---
+
 ## File Conflict Map (read before parallel work)
 
 | File | Agents / Phases | Resolution |
