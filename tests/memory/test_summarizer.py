@@ -230,3 +230,16 @@ class TestGetSessionSummary:
 
         result = summarizer.get_session_summary("s1")
         assert result is None
+
+    @pytest.mark.parametrize("result_payload", [{}, {"text": None}, {"text": 123}])
+    def test_malformed_summary_payload_returns_none(
+        self,
+        summarizer: ConversationSummarizer,
+        mock_memory: MagicMock,
+        result_payload: dict,
+    ) -> None:
+        mock_memory.search.return_value = [result_payload]
+
+        result = summarizer.get_session_summary("s1")
+
+        assert result is None

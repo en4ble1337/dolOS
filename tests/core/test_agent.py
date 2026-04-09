@@ -1,6 +1,7 @@
 """Tests for the Agent orchestrator."""
 
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -270,6 +271,220 @@ class TestAgent:
             if c.kwargs.get("memory_type") == "episodic"
         ]
         assert episodic_search[0].kwargs["limit"] == 3
+
+    @pytest.mark.asyncio
+    async def test_native_tool_calls_passed_to_background_tasks(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        mock_skill_executor: SkillExecutor,
+    ) -> None:
+        mock_llm.settings = MagicMock(primary_model="ollama/test-model")
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            skill_executor=mock_skill_executor,
+        )
+
+        tool_call_mock = MagicMock()
+        tool_call_mock.id = "call_123"
+        tool_call_mock.function.name = "test_tool"
+        tool_call_mock.function.arguments = "{}"
+
+        mock_llm.generate.side_effect = [
+            LLMResponse(content=None, tool_calls=[tool_call_mock]),
+            LLMResponse(content="Final response after tool"),
+        ]
+
+        with patch.object(agent, "_schedule_background_tasks") as schedule_background_tasks:
+            reply = await agent.process_message("session-1", "Use the tool")
+
+        assert reply == "Final response after tool"
+        schedule_background_tasks.assert_called_once()
+        assert schedule_background_tasks.call_args.args[3] == ["test_tool"]
+
+    @pytest.mark.asyncio
+    async def test_react_tool_calls_passed_to_background_tasks(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        mock_skill_executor: SkillExecutor,
+    ) -> None:
+        mock_llm.settings = MagicMock(primary_model="ollama/test-model")
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            skill_executor=mock_skill_executor,
+        )
+
+        mock_llm.generate.side_effect = [
+            LLMResponse(content='<tool_call>{"name":"test_tool","arguments":{}}</tool_call>'),
+            LLMResponse(content="Final response after tool"),
+        ]
+
+        with patch.object(agent, "_schedule_background_tasks") as schedule_background_tasks:
+            reply = await agent.process_message("session-1", "Use the tool")
+
+        assert reply == "Final response after tool"
+        schedule_background_tasks.assert_called_once()
+        assert schedule_background_tasks.call_args.args[3] == ["test_tool"]
+
+    @pytest.mark.asyncio
+    async def test_skill_extraction_runs_only_at_threshold(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+    ) -> None:
+        skill_extractor = MagicMock()
+        skill_extractor.MIN_TOOL_CALLS = 3
+        skill_extractor.evaluate_and_extract = AsyncMock(return_value=1)
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            skill_extractor=skill_extractor,
+        )
+
+        agent._schedule_background_tasks(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=["a", "b"],
+            trace_id="trace-1",
+        )
+        await asyncio.sleep(0.05)
+        skill_extractor.evaluate_and_extract.assert_not_awaited()
+
+        agent._schedule_background_tasks(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=["a", "b", "c"],
+            trace_id="trace-1",
+        )
+        await asyncio.sleep(0.05)
+        skill_extractor.evaluate_and_extract.assert_awaited_once_with(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=["a", "b", "c"],
+            trace_id="trace-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_user_profile_content_is_injected_into_system_prompt(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+        monkeypatch,
+    ) -> None:
+        from pathlib import Path
+
+        base_dir = Path(".tmp-tests")
+        base_dir.mkdir(exist_ok=True)
+        temp_dir = (base_dir / f"agent-user-profile-{uuid.uuid4().hex}").resolve()
+        temp_dir.mkdir()
+        monkeypatch.chdir(temp_dir)
+        data_dir = Path("data")
+        data_dir.mkdir()
+        (data_dir / "SOUL.md").write_text("SOUL MARKER", encoding="utf-8")
+        (data_dir / "USER.md").write_text(
+            "# User Profile\n\n## Communication Style\n- USER MARKER\n",
+            encoding="utf-8",
+        )
+        mock_llm.settings = MagicMock(primary_model="ollama/test-model")
+        agent = Agent(llm=mock_llm, memory=mock_memory, event_bus=mock_event_bus)
+
+        await agent.process_message("s1", "hello")
+
+        system_prompt = mock_llm.generate.call_args.kwargs["messages"][0]["content"]
+        assert "SOUL MARKER" in system_prompt
+        assert "USER MARKER" in system_prompt
+        assert "<user_profile>" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_user_profile_background_task_reads_recent_turns_from_transcript_store(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+    ) -> None:
+        transcript_entries = []
+        for idx in range(12):
+            transcript_entries.append({"type": "user", "content": f"user {idx}"})
+            if idx in {3, 7}:
+                transcript_entries.append({"type": "tool_call", "name": "run_command"})
+                transcript_entries.append({"type": "tool_result", "content": "ignored"})
+            transcript_entries.append({"type": "assistant", "content": f"assistant {idx}"})
+
+        transcript_store = MagicMock()
+        transcript_store.read_session.return_value = transcript_entries
+        user_profile_extractor = MagicMock()
+        user_profile_extractor.maybe_update = AsyncMock(return_value=1)
+
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            transcript_store=transcript_store,
+            user_profile_extractor=user_profile_extractor,
+        )
+
+        agent._schedule_background_tasks(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=[],
+            trace_id="trace-1",
+        )
+        await asyncio.sleep(0.05)
+
+        expected_recent_turns = [
+            entry
+            for entry in transcript_entries
+            if entry["type"] in {"user", "assistant"}
+        ][-20:]
+        transcript_store.read_session.assert_called_once_with("session-1")
+        user_profile_extractor.maybe_update.assert_awaited_once_with(
+            session_id="session-1",
+            recent_turns=expected_recent_turns,
+            trace_id="trace-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_user_profile_background_task_skips_when_no_transcript_store(
+        self,
+        mock_event_bus: EventBus,
+        mock_llm: LLMGateway,
+        mock_memory: MemoryManager,
+    ) -> None:
+        user_profile_extractor = MagicMock()
+        user_profile_extractor.maybe_update = AsyncMock(return_value=1)
+
+        agent = Agent(
+            llm=mock_llm,
+            memory=mock_memory,
+            event_bus=mock_event_bus,
+            user_profile_extractor=user_profile_extractor,
+            transcript_store=None,
+        )
+
+        agent._schedule_background_tasks(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=[],
+            trace_id="trace-1",
+        )
+        await asyncio.sleep(0.05)
+
+        user_profile_extractor.maybe_update.assert_not_awaited()
 
 
 class TestScoreImportance:

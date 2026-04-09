@@ -8,13 +8,11 @@ session reading, and correct entry structure.
 from __future__ import annotations
 
 import json
-import time
-from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from storage.transcripts import TranscriptStore
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -178,3 +176,38 @@ class TestReadSession:
         assert entries[0]["arguments"] == {"path": "/tmp/x"}
         assert "ts" in entries[0]
         assert "session_id" in entries[0]
+
+
+# ---------------------------------------------------------------------------
+# Transcript index integration
+# ---------------------------------------------------------------------------
+
+class TestTranscriptIndexIntegration:
+    def test_append_calls_append_entry_when_index_configured(self, tmp_path):
+        transcript_index = MagicMock()
+        store = TranscriptStore(
+            data_dir=str(tmp_path / "transcripts"),
+            transcript_index=transcript_index,
+        )
+
+        store.append("sess-1", "user", content="Hello transcript index")
+
+        transcript_index.append_entry.assert_called_once()
+        session_id, entry = transcript_index.append_entry.call_args.args
+        assert session_id == "sess-1"
+        assert entry["type"] == "user"
+        assert entry["content"] == "Hello transcript index"
+
+    def test_append_still_succeeds_if_indexing_raises(self, tmp_path):
+        transcript_index = MagicMock()
+        transcript_index.append_entry.side_effect = RuntimeError("index failed")
+        store = TranscriptStore(
+            data_dir=str(tmp_path / "transcripts"),
+            transcript_index=transcript_index,
+        )
+
+        store.append("sess-1", "assistant", content="still written")
+
+        entries = store.read_session("sess-1")
+        assert len(entries) == 1
+        assert entries[0]["content"] == "still written"

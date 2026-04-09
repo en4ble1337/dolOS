@@ -31,6 +31,8 @@ Token budget
 import logging
 from typing import TYPE_CHECKING
 
+from core.telemetry import get_trace_id
+
 if TYPE_CHECKING:
     from core.llm import LLMGateway
 
@@ -60,6 +62,7 @@ class ContextCompressor:
         messages: list[dict],
         prior_summary: str | None,
         llm: "LLMGateway",
+        trace_id: str | None = None,
         head_tokens: int = 4_000,
         tail_tokens: int = 20_000,
     ) -> tuple[list[dict], str]:
@@ -90,6 +93,8 @@ class ContextCompressor:
             # Nothing to compress — head + one turn = already minimal
             return messages, prior_summary or ""
 
+        active_trace_id = trace_id or get_trace_id()
+
         head_chars = head_tokens * 4
         tail_chars = tail_tokens * 4
 
@@ -104,11 +109,16 @@ class ContextCompressor:
             return messages, prior_summary or ""
 
         # Phase 3 — summarise the middle
-        new_summary = await self._summarise(middle, llm)
+        new_summary = await self._summarise(middle, llm, trace_id=active_trace_id)
 
         # Phase 4 — merge with prior summary if one exists
         if prior_summary:
-            new_summary = await self._merge(prior_summary, new_summary, llm)
+            new_summary = await self._merge(
+                prior_summary,
+                new_summary,
+                llm,
+                trace_id=active_trace_id,
+            )
 
         # Cap summary size
         if len(new_summary) > _MAX_SUMMARY_CHARS:
@@ -190,9 +200,15 @@ class ContextCompressor:
         middle = messages[2:tail_start]
         return head, middle, tail
 
-    async def _summarise(self, middle: list[dict], llm: "LLMGateway") -> str:
+    async def _summarise(
+        self,
+        middle: list[dict],
+        llm: "LLMGateway",
+        trace_id: str | None = None,
+    ) -> str:
         """Phase 3: Collapse *middle* messages into a structured summary."""
         middle_text = self._render_messages(middle)
+        active_trace_id = trace_id or get_trace_id()
 
         prompt = (
             "You are a context compressor. Summarise the conversation excerpt below "
@@ -208,7 +224,8 @@ class ContextCompressor:
                 messages=[
                     {"role": "system", "content": "You are a context compressor."},
                     {"role": "user", "content": prompt},
-                ]
+                ],
+                trace_id=active_trace_id,
             )
             return response.content or self._fallback_summary(middle)
         except Exception as exc:
@@ -216,9 +233,14 @@ class ContextCompressor:
             return self._fallback_summary(middle)
 
     async def _merge(
-        self, prior_summary: str, new_summary: str, llm: "LLMGateway"
+        self,
+        prior_summary: str,
+        new_summary: str,
+        llm: "LLMGateway",
+        trace_id: str | None = None,
     ) -> str:
         """Phase 4: Merge *new_summary* into *prior_summary*."""
+        active_trace_id = trace_id or get_trace_id()
         prompt = (
             "You are a context compressor. Merge the two session summaries below "
             "into a single coherent summary using EXACTLY the same template structure.\n\n"
@@ -233,7 +255,8 @@ class ContextCompressor:
                 messages=[
                     {"role": "system", "content": "You are a context compressor."},
                     {"role": "user", "content": prompt},
-                ]
+                ],
+                trace_id=active_trace_id,
             )
             return response.content or new_summary
         except Exception as exc:

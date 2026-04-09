@@ -7,7 +7,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from core.context_compressor import ContextCompressor
-from core.hooks import HookRegistry, HookVeto
+from core.hooks import HookRegistry
 from core.llm import LLMGateway
 from core.plan_mode import PlanModeState
 from core.prompt_builder import PromptBuilder
@@ -22,7 +22,9 @@ if TYPE_CHECKING:
     from memory.combined_extractor import CombinedTurnExtractor
     from memory.lesson_extractor import LessonExtractor
     from memory.semantic_extractor import SemanticExtractor
+    from memory.skill_extractor import SkillExtractionTask
     from memory.summarizer import ConversationSummarizer
+    from memory.user_profile_extractor import UserProfileExtractor
 
 _DEFAULT_LESSONS_PATH = "data/LESSONS.md"
 
@@ -34,14 +36,14 @@ _DEFAULT_CONTEXT_WINDOW = 32768
 
 def _score_importance(text: str) -> float:
     """Heuristic importance score for an episodic memory (0.0–1.0)."""
-    _HIGH = ["decision:", "remember:", "important:", "never ", "always ",
-             "decided", "switched", "replaced", "changed", "critical", "must "]
-    _LOW  = ["hello", "hi ", "thanks", "thank you", "ok", "sure",
-             "got it", "sounds good", "great", "awesome", "cool"]
+    high_signals = ["decision:", "remember:", "important:", "never ", "always ",
+                    "decided", "switched", "replaced", "changed", "critical", "must "]
+    low_signals = ["hello", "hi ", "thanks", "thank you", "ok", "sure",
+                   "got it", "sounds good", "great", "awesome", "cool"]
     lower = text.lower()
-    if any(s in lower for s in _HIGH):
+    if any(s in lower for s in high_signals):
         return 0.9
-    if any(s in lower for s in _LOW):
+    if any(s in lower for s in low_signals):
         return 0.2
     return 0.5
 
@@ -89,6 +91,8 @@ class Agent:
         summarizer: Optional["ConversationSummarizer"] = None,
         lesson_extractor: Optional["LessonExtractor"] = None,
         combined_extractor: Optional["CombinedTurnExtractor"] = None,
+        skill_extractor: Optional["SkillExtractionTask"] = None,
+        user_profile_extractor: Optional["UserProfileExtractor"] = None,
         session_kv: Optional[SessionKVStore] = None,
         transcript_store: Optional[TranscriptStore] = None,
         permission_policy: Optional[PermissionPolicy] = None,
@@ -103,6 +107,8 @@ class Agent:
         self.summarizer = summarizer
         self.lesson_extractor = lesson_extractor
         self.combined_extractor = combined_extractor
+        self.skill_extractor = skill_extractor
+        self.user_profile_extractor = user_profile_extractor
         self._lessons_path = _DEFAULT_LESSONS_PATH
         # Per-session cumulative token counters: {session_id: total_tokens}
         self._session_tokens: dict[str, int] = {}
@@ -180,8 +186,16 @@ class Agent:
                         f"<lessons_learned>\n{raw_lessons}\n</lessons_learned>\n\n"
                     )
 
+            user_profile_content = ""
+            user_profile_path = os.path.join("data", "USER.md")
+            if os.path.exists(user_profile_path):
+                with open(user_profile_path, "r", encoding="utf-8") as f:
+                    user_profile_content = f.read().strip()
+
             # Build system prompt using PromptBuilder
-            model_name = self.llm.settings.primary_model
+            _settings = getattr(self.llm, "settings", None)
+            _primary_model = getattr(_settings, "primary_model", "")
+            model_name = _primary_model if isinstance(_primary_model, str) else ""
             use_native_tools = _supports_native_tools(model_name)
             if self.skill_executor:
                 registry = self.skill_executor.registry
@@ -223,6 +237,7 @@ class Agent:
 
             system_prompt = PromptBuilder(
                 soul_content=soul_content,
+                user_profile_content=user_profile_content,
                 lessons_content=lessons_content,
                 summary_context=summary_context,
                 episodic_block=episodic_block,
@@ -259,11 +274,12 @@ class Agent:
                 tools = [{"type": "function", "function": s} for s in schemas] or None
 
             # 5. Generate reply (Loop for tool calls)
-            MAX_LOOPS = 10
-            for loop_idx in range(MAX_LOOPS):
+            max_loops = 10
+            tool_calls_made: list[str] = []
+            for loop_idx in range(max_loops):
                 # On the final iteration force a plain-text response — no more tool calls.
                 # This prevents qwen3's thinking mode from looping indefinitely.
-                final_loop = (loop_idx == MAX_LOOPS - 1)
+                final_loop = (loop_idx == max_loops - 1)
                 loop_tools = None if final_loop else tools
                 if final_loop and messages[-1].get("role") != "user":
                     messages.append({"role": "user", "content": "You have all the information you need. Give your final answer to the user now. Do not call any more tools."})
@@ -301,6 +317,7 @@ class Agent:
                             messages=messages,
                             prior_summary=self._session_summary.get(session_id),
                             llm=self.llm,
+                            trace_id=trace_id,
                         )
                         if new_summary:
                             self._session_summary[session_id] = new_summary
@@ -367,6 +384,7 @@ class Agent:
                         _fn_: str, _ag_: Dict[str, Any], _result_: str
                     ) -> None:
                         """Append transcript entries and episodic memory for one tool call."""
+                        tool_calls_made.append(_fn_)
                         self._append_transcript(session_id, "tool_call", name=_fn_, arguments=_ag_)
                         self._append_transcript(session_id, "tool_result", name=_fn_, content=_result_[:500])
                         self.memory.add_memory(
@@ -401,6 +419,7 @@ class Agent:
                     tool_results = []
                     for fn_name, args in react_calls:
                         result = await self.skill_executor.execute(fn_name, args, trace_id)
+                        tool_calls_made.append(fn_name)
                         tool_results.append(f"<tool_result name=\"{fn_name}\">{result}</tool_result>")
                         logger.info(f"[REACT] {fn_name}({args}) → {str(result)[:120]}")
                         # Transcript: record ReAct tool call and result
@@ -438,7 +457,13 @@ class Agent:
                     self._append_transcript(session_id, "assistant", content=content)
 
                     # 7. Fire background tasks (non-blocking)
-                    self._schedule_background_tasks(session_id, message, content, trace_id)
+                    self._schedule_background_tasks(
+                        session_id,
+                        message,
+                        content,
+                        tool_calls_made,
+                        trace_id,
+                    )
 
                     return content
 
@@ -469,7 +494,12 @@ class Agent:
             logger.warning("Transcript append failed (%s): %s", entry_type, exc)
 
     def _schedule_background_tasks(
-        self, session_id: str, user_message: str, assistant_response: str, trace_id: str
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_response: str,
+        tool_calls_made: list[str],
+        trace_id: str,
     ) -> None:
         """Fire semantic extraction and summarization as non-blocking background tasks."""
         if self.combined_extractor:
@@ -487,6 +517,35 @@ class Agent:
                 asyncio.create_task(
                     self._run_lesson_extraction(session_id, user_message, assistant_response, trace_id)
                 )
+
+        if self.skill_extractor and len(tool_calls_made) >= self.skill_extractor.MIN_TOOL_CALLS:
+            asyncio.create_task(
+                self.skill_extractor.evaluate_and_extract(
+                    session_id=session_id,
+                    user_message=user_message,
+                    assistant_response=assistant_response,
+                    tool_calls_made=tool_calls_made,
+                    trace_id=trace_id,
+                )
+            )
+
+        if self.user_profile_extractor and self.transcript_store:
+            try:
+                transcript_entries = self.transcript_store.read_session(session_id)
+                recent_turns = [
+                    entry
+                    for entry in transcript_entries
+                    if entry.get("type") in {"user", "assistant"}
+                ][-20:]
+                asyncio.create_task(
+                    self.user_profile_extractor.maybe_update(
+                        session_id=session_id,
+                        recent_turns=recent_turns,
+                        trace_id=trace_id,
+                    )
+                )
+            except Exception as e:
+                logger.warning("User profile scheduling failed: %s", e)
 
         if self.summarizer:
             should_summarize = self.summarizer.increment_turn(session_id)

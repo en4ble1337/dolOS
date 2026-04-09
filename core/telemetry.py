@@ -105,6 +105,22 @@ class EventType(str, Enum):
     LESSON_EXTRACTION_ERROR = "memory.lesson.extraction.error"
     LESSON_DUPLICATE_SKIPPED = "memory.lesson.duplicate"
 
+    # Skill extraction (Phase B)
+    SKILL_EXTRACTION_START = "skill.extraction.start"
+    SKILL_EXTRACTION_SKIP = "skill.extraction.skip"
+    SKILL_EXTRACTION_DUPLICATE = "skill.extraction.duplicate"
+    SKILL_EXTRACTION_CREATED = "skill.extraction.created"
+    SKILL_EXTRACTION_ERROR = "skill.extraction.error"
+
+    # Skill auto-fix (Phase C)
+    SKILL_AUTO_FIX_ATTEMPT = "skill.auto_fix.attempt"
+    SKILL_AUTO_FIX_SUCCESS = "skill.auto_fix.success"
+    SKILL_AUTO_FIX_FAILED = "skill.auto_fix.failed"
+
+    # User profile updates (Phase E)
+    USER_PROFILE_UPDATE_START = "user.profile.update.start"
+    USER_PROFILE_UPDATE_COMPLETE = "user.profile.update.complete"
+
     # Reflection (heartbeat consolidation)
     REFLECTION_START = "heartbeat.reflection.start"
     REFLECTION_COMPLETE = "heartbeat.reflection.complete"

@@ -641,10 +641,10 @@ Phase F  (FTS5 transcripts)                       ← standalone; needs Transcri
 
 E and F can be built in parallel with B/C once A2 is complete.
 
-> **Open Questions (to resolve before starting)**
-> - Is dolOS guaranteed to be single-operator? If yes, principal_id scoping is optional. If no, it must be in Phase A.
-> - Should Phase B auto-extracted skills be limited to read-only until manually promoted? That would reduce quarantine complexity.
-> - Should USER.md be injected into the system prompt AND semantic memory, or only one? Current code does both (file read + StaticFileLoader); the plan must define the sync contract before Phase E ships.
+> **Decisions (resolved 2026-04-09)**
+> - **Single operator** — `principal_id` scoping skipped entirely. `search_cross_session()` is a plain alias with no filter. Phase A complete.
+> - **Phase B auto-extracted skills default to `is_read_only=False, concurrency_safe=False`** — same as all generated skills. Do NOT enforce read-only for auto-extracted skills; that creates an unsustainable manual promotion backlog. The quarantine smoke test is the safety gate. The LLM extraction prompt must include `is_read_only` and `concurrency_safe` as required fields and reason about them honestly — the defaults are already conservative (False/False).
+> - **USER.md injection: both** — system prompt (file read each turn) for guaranteed fresh data + semantic memory (via `StaticFileLoader`) for contextual retrieval. On every profile update, evict stale chunks by `source_tag` then re-index. Phase E must implement `evict_by_source_tag()` before writing to `data/USER.md` at runtime.
 
 ---
 

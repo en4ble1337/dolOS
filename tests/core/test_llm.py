@@ -19,7 +19,8 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
     return Settings(
         primary_model="ollama/llama3",
-        fallback_model="gpt-4-turbo"
+        fallback_model="gpt-4-turbo",
+        ollama_api_base="http://localhost:11434",
     )
 
 @pytest.fixture
@@ -32,7 +33,7 @@ async def test_llm_gateway_success(llm_gateway: LLMGateway, event_bus: EventBus)
 
     mock_response = AsyncMock()
     mock_response.choices = [AsyncMock(message=AsyncMock(content="Hi there!", tool_calls=None))]
-    mock_response.usage = AsyncMock(total_tokens=10)
+    mock_response.usage = AsyncMock(prompt_tokens=4, completion_tokens=6)
 
     with patch("core.llm.acompletion", new_callable=AsyncMock) as mock_acompletion:
         mock_acompletion.return_value = mock_response
@@ -44,9 +45,11 @@ async def test_llm_gateway_success(llm_gateway: LLMGateway, event_bus: EventBus)
 
         # We want to check that it was called with the right model and messages, but we don't care about api_base if it's set
         kwargs = mock_acompletion.call_args.kwargs
-        assert kwargs["model"] == "ollama/llama3"
+        assert kwargs["model"] == "openai/llama3"
         assert kwargs["messages"] == messages
         assert kwargs["tools"] is None
+        assert kwargs["api_base"] == "http://localhost:11434/v1"
+        assert kwargs["api_key"] == "ollama"
 
     # Check telemetry
     assert event_bus._queue.qsize() == 2
@@ -68,7 +71,7 @@ async def test_llm_gateway_fallback(llm_gateway: LLMGateway, event_bus: EventBus
 
     mock_response = AsyncMock()
     mock_response.choices = [AsyncMock(message=AsyncMock(content="Fallback response", tool_calls=None))]
-    mock_response.usage = AsyncMock(total_tokens=15)
+    mock_response.usage = AsyncMock(prompt_tokens=7, completion_tokens=8)
 
     with patch("core.llm.acompletion", new_callable=AsyncMock) as mock_acompletion:
         # First call fails, second succeeds
@@ -82,12 +85,14 @@ async def test_llm_gateway_fallback(llm_gateway: LLMGateway, event_bus: EventBus
         assert response.content == "Fallback response"
 
         assert mock_acompletion.call_count == 2
-        
+
         call_1_kwargs = mock_acompletion.call_args_list[0].kwargs
-        assert call_1_kwargs["model"] == "ollama/llama3"
+        assert call_1_kwargs["model"] == "openai/llama3"
         assert call_1_kwargs["messages"] == messages
         assert call_1_kwargs["tools"] is None
-        
+        assert call_1_kwargs["api_base"] == "http://localhost:11434/v1"
+        assert call_1_kwargs["api_key"] == "ollama"
+
         call_2_kwargs = mock_acompletion.call_args_list[1].kwargs
         assert call_2_kwargs["model"] == "gpt-4-turbo"
         assert call_2_kwargs["messages"] == messages
@@ -111,7 +116,11 @@ async def test_llm_gateway_fallback(llm_gateway: LLMGateway, event_bus: EventBus
 
 @pytest.mark.asyncio
 async def test_llm_gateway_no_fallback_configured(event_bus: EventBus) -> None:
-    settings = Settings(primary_model="ollama/llama3", fallback_model=None)
+    settings = Settings(
+        primary_model="ollama/llama3",
+        fallback_model=None,
+        ollama_api_base="http://localhost:11434",
+    )
     gateway = LLMGateway(event_bus=event_bus, settings=settings)
 
     messages = [{"role": "user", "content": "Hello"}]

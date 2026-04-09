@@ -31,6 +31,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,14 @@ class TranscriptStore:
     instance per process.
     """
 
-    def __init__(self, data_dir: str = _DEFAULT_DATA_DIR) -> None:
+    def __init__(self, data_dir: str = _DEFAULT_DATA_DIR, transcript_index: Any | None = None) -> None:
         self._dir = Path(data_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._transcript_index = transcript_index
+
+    def set_transcript_index(self, transcript_index: Any | None) -> None:
+        """Inject a transcript index after store construction."""
+        self._transcript_index = transcript_index
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,6 +80,15 @@ class TranscriptStore:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("TranscriptStore: failed to write %s: %s", path, exc)
+            return
+
+        if self._transcript_index is None:
+            return
+
+        try:
+            self._transcript_index.append_entry(session_id, entry)
+        except Exception as exc:
+            logger.warning("TranscriptStore: failed to index entry for %s: %s", session_id, exc)
 
     def list_sessions(self) -> list[dict]:
         """Return metadata for all sessions that have transcripts.

@@ -97,6 +97,40 @@ class TestIdentitySection:
         assert "<soul_instructions>" in result
         assert "</soul_instructions>" in result
 
+    def test_user_profile_content_present_when_provided(self):
+        pb = PromptBuilder(
+            soul_content="agent identity",
+            user_profile_content="Prefers terse updates.",
+        )
+        result = pb.build(session_id="s1")
+        assert "Prefers terse updates." in result
+
+    def test_user_profile_wrapped_in_tags(self):
+        pb = PromptBuilder(
+            soul_content="agent identity",
+            user_profile_content="Profile marker",
+        )
+        result = pb.build(session_id="s1")
+        assert "<user_profile>" in result
+        assert "</user_profile>" in result
+
+    def test_user_profile_absent_when_empty(self):
+        pb = PromptBuilder(
+            soul_content="agent identity",
+            user_profile_content="",
+        )
+        result = pb.build(session_id="s1")
+        assert "<user_profile>" not in result
+
+    def test_identity_section_contains_both_soul_and_user_profile(self):
+        pb = PromptBuilder(
+            soul_content="SOUL MARKER",
+            user_profile_content="USER MARKER",
+        )
+        result = pb.build(session_id="s1")
+        assert "SOUL MARKER" in result
+        assert "USER MARKER" in result
+
 
 # ---------------------------------------------------------------------------
 # Section 3: persistent_memory (lessons + summary)

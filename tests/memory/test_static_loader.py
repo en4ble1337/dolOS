@@ -280,3 +280,33 @@ def test_get_stored_mtime_handles_search_exception() -> None:
     loader = _make_loader(memory=memory)
     result = loader._get_stored_mtime("any_tag")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# evict_by_source_tag
+# ---------------------------------------------------------------------------
+
+def test_evict_by_source_tag_deletes_semantic_chunks_for_source_tag() -> None:
+    memory = _make_memory_mock()
+    memory.vector_store = MagicMock()
+    memory.vector_store.delete_by_metadata.return_value = 6
+    loader = _make_loader(memory=memory)
+
+    result = loader.evict_by_source_tag("user_profile")
+
+    assert result == 6
+    memory.vector_store.delete_by_metadata.assert_called_once_with(
+        collection_name="semantic",
+        filter_metadata={"source": "user_profile"},
+    )
+
+
+def test_evict_by_source_tag_handles_delete_exception() -> None:
+    memory = _make_memory_mock()
+    memory.vector_store = MagicMock()
+    memory.vector_store.delete_by_metadata.side_effect = RuntimeError("delete failed")
+    loader = _make_loader(memory=memory)
+
+    result = loader.evict_by_source_tag("user_profile")
+
+    assert result == 0

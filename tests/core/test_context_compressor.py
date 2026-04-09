@@ -1,10 +1,11 @@
 """Tests for the 4-phase structured context compressor (Gap H1)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.context_compressor import ContextCompressor, SUMMARY_TEMPLATE
+from core.context_compressor import ContextCompressor
+from core.telemetry import reset_trace_id, set_trace_id
 
 
 def _make_llm(reply: str = "## Session Summary\n**Goal:** test\n**Progress:** done\n**Decisions:** none\n**Files Changed:** none\n**Next Steps:** continue") -> MagicMock:
@@ -113,6 +114,19 @@ class TestSummarise:
         result = await comp._summarise(middle, llm)
         assert "messages omitted" in result
 
+    @pytest.mark.asyncio
+    async def test_passes_explicit_trace_id_to_llm(self):
+        comp = ContextCompressor()
+        llm = _make_llm()
+        middle = [
+            {"role": "user", "content": "What's wrong?"},
+            {"role": "assistant", "content": "There's a bug in the loop."},
+        ]
+
+        await comp._summarise(middle, llm, trace_id="trace-compress-1")
+
+        assert llm.generate.call_args.kwargs["trace_id"] == "trace-compress-1"
+
 
 class TestMerge:
     @pytest.mark.asyncio
@@ -216,3 +230,24 @@ class TestCompress:
             msgs, prior_summary=None, llm=llm, head_tokens=100, tail_tokens=100_000
         )
         llm.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uses_context_trace_id_when_not_explicit(self):
+        comp = ContextCompressor()
+        llm = _make_llm()
+        msgs = _make_messages(10)
+        token = set_trace_id("trace-from-context")
+
+        try:
+            await comp.compress(
+                msgs,
+                prior_summary="## Session Summary\n**Goal:** prior\n**Progress:** old\n**Decisions:** x\n**Files Changed:** x\n**Next Steps:** y",
+                llm=llm,
+                head_tokens=10,
+                tail_tokens=10,
+            )
+        finally:
+            reset_trace_id(token)
+
+        trace_ids = [call.kwargs["trace_id"] for call in llm.generate.call_args_list]
+        assert trace_ids == ["trace-from-context", "trace-from-context"]

@@ -1,9 +1,20 @@
-import inspect
+﻿import inspect
+import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Return cosine similarity in [0, 1] between two vectors. Returns 0 on zero vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 @dataclass
@@ -21,7 +32,7 @@ class SkillRegistration:
     func: Callable[..., Any]
     input_schema: dict[str, Any] | None = None
 
-    # Gap 2 — typed tool contract metadata
+    # Gap 2 â€” typed tool contract metadata
     is_read_only: bool = True
     """True if the skill does not mutate external state (safe to run in parallel)."""
 
@@ -33,13 +44,41 @@ class SkillRegistration:
     When set, callers may prefer this over the static ``description`` string.
     """
 
+    # Phase D â€” semantic routing
+    description_embedding: list[float] | None = None
+    """Embedding vector for the description, set at registration or on set_embedder() backfill."""
+
 
 class SkillRegistry:
     """A registry for managing and generating JSON schemas for tools."""
 
+    # Blend weights for semantic + keyword routing score.
+    _SEMANTIC_WEIGHT: float = 0.7
+    _KEYWORD_WEIGHT: float = 0.3
+
     def __init__(self) -> None:
         self._registrations: dict[str, SkillRegistration] = {}
         self._schemas: dict[str, dict[str, Any]] = {}
+        self._embedder: Any = None  # set via set_embedder(); optional
+
+    def set_embedder(self, embedder: Any) -> None:
+        """Inject the shared embedding service and backfill all registered skills.
+
+        Built-in skills are imported before the embedder is available in main.py.
+        Calling this method after memory init immediately embeds every skill whose
+        ``description_embedding`` is still None, so semantic routing works for all
+        skills â€” not just those registered after this call.
+
+        Args:
+            embedder: Any object with an ``encode(text: str) -> list[float]`` method.
+        """
+        self._embedder = embedder
+        for reg in self._registrations.values():
+            if reg.description_embedding is None:
+                try:
+                    reg.description_embedding = embedder.encode(reg.description)
+                except Exception:
+                    pass  # leave as None; keyword fallback covers this skill
 
     def register(
         self,
@@ -52,6 +91,13 @@ class SkillRegistry:
         description_fn: Callable[[], str] | None = None,
     ) -> None:
         """Register a function as a skill and generate its OpenAI JSON schema."""
+        embedding: list[float] | None = None
+        if self._embedder is not None:
+            try:
+                embedding = self._embedder.encode(description)
+            except Exception:
+                pass
+
         reg = SkillRegistration(
             name=name,
             description=description,
@@ -60,6 +106,7 @@ class SkillRegistry:
             is_read_only=is_read_only,
             concurrency_safe=concurrency_safe,
             description_fn=description_fn,
+            description_embedding=embedding,
         )
         self._registrations[name] = reg
 
@@ -101,10 +148,16 @@ class SkillRegistry:
     def get_relevant_schemas(self, query: str, max_tools: int = 10) -> list[dict[str, Any]]:
         """Return the most query-relevant schemas, capped at *max_tools*.
 
-        When the registry has ≤ 10 skills all schemas are returned unchanged
+        When the registry has â‰¤ 10 skills all schemas are returned unchanged
         (routing overhead isn't worthwhile at that scale).  For larger registries
-        each skill is scored by keyword overlap between *query* and the skill
-        name + description, then the top *max_tools* are returned.
+        each skill is scored and the top *max_tools* are returned.
+
+        Scoring (when embedder is available):
+            blended = 0.7 * cosine_similarity(query_embedding, skill_embedding)
+                    + 0.3 * keyword_overlap_fraction
+
+        Fallback (no embedder or all embeddings are None):
+            keyword overlap count only (original behaviour).
 
         Emits a ``[TOOL_ROUTING]`` debug log entry with counts.
         """
@@ -114,24 +167,52 @@ class SkillRegistry:
         all_schemas = self.get_all_schemas()
         total = len(all_schemas)
 
-        _ROUTING_THRESHOLD = 10
-        if total <= _ROUTING_THRESHOLD:
-            _log.debug("[TOOL_ROUTING] registry=%d ≤ threshold=%d, routing skipped", total, _ROUTING_THRESHOLD)
+        routing_threshold = 10
+        if total <= routing_threshold:
+            _log.debug("[TOOL_ROUTING] registry=%d â‰¤ threshold=%d, routing skipped", total, routing_threshold)
             return all_schemas
 
         query_tokens = set(query.lower().split())
+        n_query_tokens = max(len(query_tokens), 1)
 
-        def _score(schema: dict[str, Any]) -> int:
-            name = schema.get("name", "").lower().replace("_", " ")
-            desc = schema.get("description", "").lower()
-            combined = set(name.split()) | set(desc.split())
-            return len(query_tokens & combined)
+        # Attempt semantic scoring if embedder is available
+        query_embedding: list[float] | None = None
+        if self._embedder is not None:
+            try:
+                query_embedding = self._embedder.encode(query)
+            except Exception:
+                query_embedding = None
+
+        use_semantic = query_embedding is not None
+
+        def _score(schema: dict[str, Any]) -> float:
+            name = schema.get("name", "")
+            reg = self._registrations.get(name)
+
+            # Keyword fraction: overlap / query token count â†’ [0, 1]
+            name_tokens = set(name.lower().replace("_", " ").split())
+            desc_tokens = set(schema.get("description", "").lower().split())
+            overlap = len(query_tokens & (name_tokens | desc_tokens))
+            keyword_frac = min(overlap / n_query_tokens, 1.0)
+
+            if (
+                not use_semantic
+                or query_embedding is None
+                or reg is None
+                or reg.description_embedding is None
+            ):
+                return keyword_frac
+
+            semantic = _cosine_similarity(query_embedding, reg.description_embedding)
+            return self._SEMANTIC_WEIGHT * semantic + self._KEYWORD_WEIGHT * keyword_frac
 
         scored = sorted(all_schemas, key=_score, reverse=True)
         result = scored[:max_tools]
+
         _log.debug(
-            "[TOOL_ROUTING] registry=%d query=%r selected=%d/%d",
-            total, query[:60], len(result), total,
+            "[TOOL_ROUTING] registry=%d query=%r mode=%s selected=%d/%d",
+            total, query[:60], "semantic+keyword" if use_semantic else "keyword",
+            len(result), total,
         )
         return result
 
@@ -264,3 +345,4 @@ def skill(
         return func
 
     return decorator
+

@@ -1,26 +1,35 @@
+import argparse as _argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from contextlib import asynccontextmanager
-
-import os
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+import skills.local.filesystem  # noqa: F401 — registers read_file, write_file
+import skills.local.generated  # noqa: F401 — auto-loads agent-generated skills
+import skills.local.memory as _memory_skill  # registers search_memory
+import skills.local.meta  # noqa: F401 — registers create_skill, fix_skill
+import skills.local.session_memory  # noqa: F401 — registers set/get_session_memory
+import skills.local.session_notes  # noqa: F401 — registers set/get_session_note
+import skills.local.subagent as _subagent_skill  # registers spawn_subagent
+import skills.local.system  # noqa: F401 — registers run_command, run_code
 from api.routes.chat import chat_router
-from api.routes.v1_chat import v1_router
 from api.routes.health import router as health_router
 from api.routes.memory import router as memory_router
 from api.routes.observability import router as obs_router
 from api.routes.observability import set_collector
 from api.routes.skills import router as skills_router
 from api.routes.telemetry import router as telemetry_router
-from channels.terminal import TerminalChannel
-from channels.telegram_channel import TelegramChannel
+from api.routes.v1_chat import v1_router
 from channels.discord_channel import DiscordChannel
+from channels.telegram_channel import TelegramChannel
+from channels.terminal import TerminalChannel
 from core.agent import Agent
 from core.alerting import AlertNotifier
 from core.commands import CommandRouter
@@ -30,29 +39,24 @@ from core.hooks import HookRegistry
 from core.llm import LLMGateway
 from core.plan_mode import PlanModeState
 from core.telemetry import EventBus, EventCollector
+from heartbeat.integrations.deadman_switch import DeadManSwitch
+from heartbeat.integrations.memory_maintenance import MemoryMaintenanceTask
+from heartbeat.integrations.reflection_task import ReflectionTask
+from heartbeat.integrations.system_health import SystemHealthProbe
 from memory.combined_extractor import CombinedTurnExtractor
 from memory.lesson_extractor import LessonExtractor
 from memory.memory_manager import MemoryManager
 from memory.semantic_extractor import SemanticExtractor
 from memory.session_kv import get_default_store as _get_session_kv
+from memory.skill_extractor import SkillExtractionTask
 from memory.static_loader import StaticFileLoader
 from memory.summarizer import ConversationSummarizer
+from memory.transcript_index import TranscriptIndex
+from memory.user_profile_extractor import UserProfileExtractor
 from memory.vector_store import VectorStore
-from storage.transcripts import TranscriptStore
-from heartbeat.integrations.memory_maintenance import MemoryMaintenanceTask
-from heartbeat.integrations.reflection_task import ReflectionTask
-from heartbeat.integrations.system_health import SystemHealthProbe
-from heartbeat.integrations.deadman_switch import DeadManSwitch
-import skills.local.filesystem  # noqa: F401 — registers read_file, write_file
-import skills.local.system  # noqa: F401 — registers run_command, run_code
-import skills.local.meta  # noqa: F401 — registers create_skill, fix_skill
-import skills.local.memory as _memory_skill  # registers search_memory
-import skills.local.session_memory  # noqa: F401 — registers set/get_session_memory
-import skills.local.session_notes  # noqa: F401 — registers set/get_session_note
-import skills.local.subagent as _subagent_skill  # registers spawn_subagent
-import skills.local.generated  # noqa: F401 — auto-loads agent-generated skills
 from skills.executor import SkillExecutor
 from skills.registry import _default_registry as registry
+from storage.transcripts import TranscriptStore
 from tools.mcp_loader import MCPServerManager
 
 # Settings must be loaded first so log_level is available for basicConfig
@@ -62,7 +66,7 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-import os as _os; _os.makedirs("data", exist_ok=True)
+os.makedirs("data", exist_ok=True)
 _file_handler = logging.FileHandler("data/agent.log")
 _file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 logging.getLogger().addHandler(_file_handler)
@@ -73,7 +77,7 @@ logger = logging.getLogger("main")
 # Skill modules were already imported above, so the registry is
 # populated. We skip FastAPI, uvicorn, and all channel setup.
 # ------------------------------------------------------------------
-import argparse as _argparse
+
 _parser = _argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--mcp", action="store_true", default=False)
 _args, _ = _parser.parse_known_args()
@@ -96,16 +100,20 @@ memory = MemoryManager(
     event_bus=event_bus,
     recency_decay_days=settings.memory_recency_decay_days,
 )
+registry.set_embedder(memory.embedding_service)
 _memory_skill.set_memory_manager(memory)
+transcript_index = TranscriptIndex(db_path="data/transcript_index.db")
+transcript_index.initialize()
+_memory_skill.set_transcript_index(transcript_index)
 
 # Index static knowledge files into semantic memory (Gap 1)
 logger.info("Indexing static knowledge files into semantic memory...")
 _static_loader = StaticFileLoader(memory)
 _static_loader.index_file("data/USER.md", source_tag="user_profile")
 _static_loader.index_file("data/MEMORY.md", source_tag="long_term_decisions")
-executor = SkillExecutor(registry=registry, event_bus=event_bus)
+executor = SkillExecutor(registry=registry, event_bus=event_bus, llm=llm)
 session_kv = _get_session_kv()
-transcript_store = TranscriptStore()
+transcript_store = TranscriptStore(transcript_index=transcript_index)
 hook_registry = HookRegistry()
 plan_mode_state = PlanModeState()
 semantic_extractor = SemanticExtractor(
@@ -131,6 +139,13 @@ combined_extractor = CombinedTurnExtractor(
     lesson_extractor=lesson_extractor,
     event_bus=event_bus,
 ) if (semantic_extractor is not None and lesson_extractor is not None) else None
+skill_extractor = SkillExtractionTask(llm=llm, registry=registry, event_bus=event_bus)
+user_profile_extractor = UserProfileExtractor(
+    llm=llm,
+    profile_path="data/USER.md",
+    static_loader=_static_loader,
+    event_bus=event_bus,
+)
 agent = Agent(
     llm=llm,
     memory=memory,
@@ -140,6 +155,8 @@ agent = Agent(
     summarizer=summarizer,
     lesson_extractor=lesson_extractor,
     combined_extractor=combined_extractor,
+    skill_extractor=skill_extractor,
+    user_profile_extractor=user_profile_extractor,
     session_kv=session_kv,
     transcript_store=transcript_store,
     hook_registry=hook_registry,
@@ -177,6 +194,23 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Telemetry collector error: {e}")
 
     app.state.telemetry_task = asyncio.create_task(process_telemetry())
+
+    loop = asyncio.get_running_loop()
+    transcript_index_future = loop.run_in_executor(
+        None,
+        transcript_index.index_all,
+        Path("data/transcripts"),
+    )
+
+    def _log_transcript_index_result(future: asyncio.Future) -> None:
+        try:
+            indexed = future.result()
+            logger.info("Transcript index startup backfill complete: %s rows indexed", indexed)
+        except Exception as exc:
+            logger.warning("Transcript index startup backfill failed: %s", exc)
+
+    transcript_index_future.add_done_callback(_log_transcript_index_result)
+    app.state.transcript_index_future = transcript_index_future
 
     # Connect MCP servers (web search, fetch, browser)
     if settings.mcp_enabled:

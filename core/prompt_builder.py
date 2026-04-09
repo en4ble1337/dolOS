@@ -8,7 +8,7 @@ testable, allows per-section telemetry, and makes future prompt surgery
 Sections (in render order)
 --------------------------
 1. system_bootstrap  — tool-calling rules (native vs ReAct XML)
-2. identity          — SOUL.md content wrapped in <soul_instructions>
+2. identity          — SOUL.md + optional USER.md content
 3. persistent_memory — lessons learned + conversation summary
 4. session_memory    — SessionKVStore.format_for_prompt(session_id)
 5. working_memory    — static files (CURRENT_TASK.md, RUNBOOK.md, KNOWN_ISSUES.md)
@@ -49,6 +49,7 @@ class PromptBuilder:
         self,
         *,
         soul_content: str,
+        user_profile_content: str = "",
         lessons_content: str = "",
         summary_context: str = "",
         episodic_block: str = "",
@@ -59,6 +60,7 @@ class PromptBuilder:
         working_memory_content: str = "",
     ) -> None:
         self.soul_content = soul_content
+        self.user_profile_content = user_profile_content
         self.lessons_content = lessons_content
         self.summary_context = summary_context
         self.episodic_block = episodic_block
@@ -158,12 +160,19 @@ class PromptBuilder:
             )
 
     def _section_identity(self) -> str:
-        """Section 2: agent identity from SOUL.md."""
-        return (
+        """Section 2: agent identity from SOUL.md and optional USER.md."""
+        section = (
             "You are the following AI Agent. Below is your core identity, rules, and personality "
             "defined in your SOUL.md file:\n\n"
             f"<soul_instructions>\n{self.soul_content}\n</soul_instructions>\n\n"
         )
+        if self.user_profile_content:
+            section += (
+                "<user_profile>\n"
+                f"{self.user_profile_content}\n"
+                "</user_profile>\n\n"
+            )
+        return section
 
     def _section_persistent_memory(self) -> str:
         """Section 3: lessons learned + conversation summary (may be empty)."""

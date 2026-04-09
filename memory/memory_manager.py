@@ -188,3 +188,35 @@ class MemoryManager:
             ))
 
         return processed_results[:limit]
+
+    def search_cross_session(
+        self,
+        query: str,
+        memory_type: Literal["episodic", "semantic"] = "episodic",
+        limit: int = 8,
+        recency_weight: float = 0.2,
+        importance_weight: float = 0.3,
+        similarity_weight: float = 0.5,
+        min_score: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """Named alias for search() with no filter_metadata, signalling cross-session intent.
+
+        Single-operator deployment: all entries share the same implicit principal — no filter
+        is the correct behaviour and this alias makes that intent explicit at call sites.
+        For multi-user deployments, use search() directly with
+        filter_metadata={"principal_id": <user_id>} instead.
+
+        NOTE: Existing call sites in core/agent.py:151-155 already pass no filter — do NOT
+        change those call sites. Use this alias at NEW call sites to make cross-session intent
+        explicit.
+        """
+        return self.search(
+            query=query,
+            memory_type=memory_type,
+            limit=limit,
+            recency_weight=recency_weight,
+            importance_weight=importance_weight,
+            similarity_weight=similarity_weight,
+            filter_metadata=None,
+            min_score=min_score,
+        )

@@ -157,6 +157,21 @@ class StaticFileLoader:
         # Step 4: strip and drop empties
         return [c.strip() for c in chunks if c.strip()]
 
+    def evict_by_source_tag(self, source_tag: str) -> int:
+        """Delete semantic chunks for a previously indexed static file source tag."""
+        try:
+            return self.memory.vector_store.delete_by_metadata(
+                collection_name="semantic",
+                filter_metadata={"source": source_tag},
+            )
+        except Exception as exc:
+            logger.warning(
+                "StaticFileLoader: failed to evict source_tag='%s': %s",
+                source_tag,
+                exc,
+            )
+            return 0
+
     def _get_stored_mtime(self, source_tag: str) -> Optional[float]:
         """Search semantic memory for any chunk with this source_tag, return its stored mtime.
 

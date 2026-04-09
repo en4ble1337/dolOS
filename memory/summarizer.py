@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from core.llm import LLMGateway
 from core.telemetry import Event, EventBus, EventType
@@ -157,5 +157,7 @@ class ConversationSummarizer:
             filter_metadata={"session_id": session_id, "is_summary": True},
         )
         if results:
-            return results[0]["text"]
+            summary_text = results[0].get("text")
+            if isinstance(summary_text, str):
+                return summary_text
         return None
