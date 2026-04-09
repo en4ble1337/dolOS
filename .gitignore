@@ -66,6 +66,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tmp-tests/
 
 # Local env vars
 .env
