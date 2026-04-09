@@ -1,7 +1,9 @@
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from qdrant_client.http.models import FilterSelector
 
 from memory.vector_store import VectorStore
 
@@ -139,3 +141,25 @@ def test_file_backed_persistence(tmp_path: Any) -> None:
     assert len(results) == 1
     assert results[0].payload["text"] == "I survive restarts"
     store2.client.close()
+
+
+def test_delete_by_metadata_builds_expected_filter_and_calls_client_delete() -> None:
+    store = VectorStore(location=":memory:")
+    client = MagicMock()
+    client.delete.return_value = MagicMock(operation_id=9)
+    store.client = client
+
+    result = store.delete_by_metadata(
+        collection_name="semantic",
+        filter_metadata={"source": "user_profile", "path": "data/USER.md"},
+    )
+
+    assert result == 9
+    client.delete.assert_called_once()
+    kwargs = client.delete.call_args.kwargs
+    assert kwargs["collection_name"] == "semantic"
+    selector = kwargs["points_selector"]
+    assert isinstance(selector, FilterSelector)
+    conditions = selector.filter.must
+    actual = {condition.key: condition.match.value for condition in conditions}
+    assert actual == {"source": "user_profile", "path": "data/USER.md"}

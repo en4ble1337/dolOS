@@ -59,7 +59,7 @@ function App() {
                       Duration: {ev.duration_ms.toFixed(2)}ms
                     </div>
                   )}
-                  {ev.payload && (
+                  {ev.payload !== undefined && ev.payload !== null && (
                     <pre className="mt-2 text-xs opacity-80 overflow-x-auto p-2 bg-black/40 rounded">
                       {JSON.stringify(ev.payload, null, 2)}
                     </pre>

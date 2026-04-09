@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import TYPE_CHECKING, Optional, Protocol
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.styles import Style
@@ -7,7 +7,11 @@ from rich.markdown import Markdown
 
 from channels import Channel
 from core.agent import Agent
+from core.context_refs import expand_refs
 from core.telemetry import Event, EventBus, EventType
+
+if TYPE_CHECKING:
+    from core.commands import CommandRouter
 
 
 class TerminalChannel(Channel):
@@ -18,10 +22,12 @@ class TerminalChannel(Channel):
         agent: Agent,
         event_bus: EventBus,
         session_id: str = "terminal",
+        command_router: "Optional[CommandRouter]" = None,
     ) -> None:
         self.agent = agent
         self.event_bus = event_bus
         self.session_id = session_id
+        self.command_router = command_router
 
         self.console = Console()
         self.style = Style.from_dict({
@@ -45,7 +51,8 @@ class TerminalChannel(Channel):
                 if not user_input.strip():
                     continue
 
-                await self._process_turn(user_input)
+                expanded = expand_refs(user_input)
+                await self._process_turn(expanded)
 
             except (EOFError, KeyboardInterrupt):
                 break
@@ -67,6 +74,13 @@ class TerminalChannel(Channel):
         )
 
         try:
+            # Check for operator commands before sending to the agent
+            if self.command_router is not None:
+                cmd_result = await self.command_router.handle(self.session_id, user_input)
+                if cmd_result is not None:
+                    self.console.print("[bold cyan]Assistant:[/bold cyan]", Markdown(cmd_result))
+                    return
+
             # Send message to agent (agent generates trace internally)
             reply = await self.agent.process_message(
                 session_id=self.session_id,

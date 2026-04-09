@@ -165,3 +165,24 @@ class VectorStore:
         )
         # result.status == "acknowledged" on success; operation_id is a proxy count
         return result.operation_id or 0
+
+    def delete_by_metadata(
+        self,
+        collection_name: str,
+        filter_metadata: Dict[str, Any],
+    ) -> int:
+        """Delete points whose payload metadata matches all provided key-value pairs."""
+        if not filter_metadata:
+            return 0
+
+        filter_condition = Filter(
+            must=[
+                FieldCondition(key=key, match=MatchValue(value=value))
+                for key, value in filter_metadata.items()
+            ]
+        )
+        result = self.client.delete(
+            collection_name=collection_name,
+            points_selector=FilterSelector(filter=filter_condition),
+        )
+        return result.operation_id or 0

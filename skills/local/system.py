@@ -28,6 +28,8 @@ def _get_sandbox() -> SandboxExecutor:
         "can solve a task — write Python to handle it on the fly. "
         "If the solution is reusable, follow up with create_skill to save it permanently."
     ),
+    read_only=False,
+    concurrency_safe=False,
 )
 async def run_code(code: str, timeout_seconds: float = 30.0) -> str:
     """Executes arbitrary Python code inside a sandbox subprocess.
@@ -50,6 +52,8 @@ async def run_code(code: str, timeout_seconds: float = 30.0) -> str:
 @skill(
     name="run_command",
     description="Run a system command in the terminal. Useful for running build scripts, listing files outside sandbox, etc.",
+    read_only=False,
+    concurrency_safe=False,
 )
 async def run_command(command: str, timeout_seconds: float = 30.0) -> str:
     """Executes a system shell command inside a sandbox subprocess.

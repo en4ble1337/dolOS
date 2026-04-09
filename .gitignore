@@ -58,6 +58,7 @@ data/qdrant_storage/
 .idea/
 *.swp
 .claude/
+claw-code/
 
 # Testing / Cache
 .coverage

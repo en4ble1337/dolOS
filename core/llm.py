@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 class LLMResponse(BaseModel):
     content: Optional[str]
     tool_calls: Optional[List[Any]] = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class LLMGateway:
@@ -80,6 +82,12 @@ class LLMGateway:
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
 
+            input_tokens = 0
+            output_tokens = 0
+            if hasattr(response, "usage") and response.usage:
+                input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+                output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+
             await self.event_bus.emit(
                 Event(
                     event_type=EventType.LLM_CALL_END,
@@ -87,11 +95,9 @@ class LLMGateway:
                     trace_id=trace_id,
                     payload={
                         "model": self.settings.primary_model,
-                        "total_tokens": (
-                            response.usage.total_tokens
-                            if hasattr(response, "usage") and response.usage
-                            else 0
-                        ),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": input_tokens + output_tokens,
                     },
                     duration_ms=duration_ms,
                 )
@@ -104,6 +110,8 @@ class LLMGateway:
                     if response.choices
                     else None
                 ),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
 
         except Exception as e:
@@ -130,6 +138,12 @@ class LLMGateway:
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
 
+            fb_input_tokens = 0
+            fb_output_tokens = 0
+            if hasattr(response, "usage") and response.usage:
+                fb_input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+                fb_output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+
             await self.event_bus.emit(
                 Event(
                     event_type=EventType.LLM_CALL_END,
@@ -137,11 +151,9 @@ class LLMGateway:
                     trace_id=trace_id,
                     payload={
                         "model": self.settings.fallback_model,
-                        "total_tokens": (
-                            response.usage.total_tokens
-                            if hasattr(response, "usage") and response.usage
-                            else 0
-                        ),
+                        "input_tokens": fb_input_tokens,
+                        "output_tokens": fb_output_tokens,
+                        "total_tokens": fb_input_tokens + fb_output_tokens,
                     },
                     duration_ms=duration_ms,
                 )
@@ -154,4 +166,6 @@ class LLMGateway:
                     if response.choices
                     else None
                 ),
+                input_tokens=fb_input_tokens,
+                output_tokens=fb_output_tokens,
             )

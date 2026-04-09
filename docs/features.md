@@ -1,225 +1,243 @@
-Agreed, observability is the right priority. Here is everything, structured so you can feed it directly as a prompt or task list.
+# dolOS Feature Reference
+
+> Last updated: 2026-04-06 — reflects all 15 claw-gaps implemented on `feature/claw-gaps`.
 
 ---
 
-**Observability & dashboard (your priority, do this first)**
+## Core Agent Loop
 
-Structured logging with a unique trace ID per request that flows through every layer: gateway → agent → memory → tool call → response. Without a shared trace ID you cannot correlate what happened across components. Use Python `structlog` with JSON output.
+**File:** `core/agent.py`
 
-OpenTelemetry for spans. Every LLM call, every Qdrant query, every heartbeat task gets a span with duration, token count, model used, and success/failure. This feeds into Tempo or Jaeger locally.
-
-Dashboard panels you actually want: live agent activity feed (what is it doing right now), LLM call timeline (which model, how long, tokens in/out, cost estimate), memory hit rate over time, fallback frequency (how often Ollama fails and escalates to Claude/GPT), heartbeat health (did the 30-min job actually run, what did it find), channel message volume by source, skill invocation frequency, Qdrant collection size growth over time, and error rate by component.
-
-Real-time WebSocket feed from the agent's internal event bus pushed to the dashboard. Every decision the agent makes emits an event: "chose local model", "memory miss, querying Qdrant", "skill invoked: X", "falling back to Claude". This is what makes the dashboard feel alive rather than just a metrics board.
-
----
-
-**Reliability layer**
-
-Asyncio task queue with per-channel concurrency limits. Telegram, Discord, heartbeat, and API requests should each have a dedicated queue with a max concurrent worker count. Prevents a flood of Telegram messages from starving the heartbeat.
-
-Circuit breaker on every external dependency: Ollama, Qdrant, Gmail API, Google Calendar, Claude API. Use `pybreaker` or implement a simple state machine. When Ollama goes down, the circuit opens immediately instead of every request hanging until timeout.
-
-Dead man's switch for the heartbeat. A simple endpoint that gets hit every 30 minutes. If it goes more than 45 minutes without a hit, push a Telegram alert. You will thank yourself for this at 11pm when the scheduler silently died.
-
-Explicit retry policy per integration. Ollama gets 2 retries with 500ms backoff. Cloud LLMs get 3 retries with exponential backoff. Gmail API gets 1 retry. Different dependencies have different failure modes, treat them differently.
-
-Health check endpoint (`/health/deep`) that tests every dependency: Qdrant ping, Ollama model load status, Gmail token validity, NFS mount reachability. Not just "is the process running" but "can it actually do its job."
+- Multi-turn LLM loop with native function calling (OpenAI tool format) and ReAct XML fallback
+- Up to 10 tool-call iterations per user message before forcing a final response
+- Episodic + semantic memory retrieved and injected into every turn
+- Background tasks (semantic extraction, lesson extraction, summarization) fire after each turn without blocking the response
 
 ---
 
-**Context and memory improvements**
+## Prompt Assembly (Gap 14)
 
-Conversation summarizer that runs automatically when a thread exceeds 60% of the model's context window. Summarize older turns into a compressed block, keep the last N turns verbatim. Store the summary back into Qdrant as a special memory type so it is retrievable.
+**File:** `core/prompt_builder.py`
 
-Memory importance scoring. Not all memories are equal. When writing to Qdrant, score each memory on a scale (recency, access frequency, explicit user signal like "remember this"). Use the score to break ties when top-k results are close in similarity. Decay old low-scored memories over time.
+7 named sections assembled in order, each logged at DEBUG level:
 
-Episodic vs semantic memory separation. Right now everything goes into one collection. Episodic (what happened in conversation X on date Y) and semantic (user prefers terminal, working on GPU Autopilot) should be separate collections with different retrieval strategies.
+| Section | Content |
+|---------|---------|
+| `system_bootstrap` | Tool-calling rules (native or ReAct XML based on model) |
+| `identity` | `data/SOUL.md` wrapped in `<soul_instructions>` |
+| `persistent_memory` | `data/LESSONS.md` + conversation summary |
+| `session_memory` | Per-session K/V pairs from `SessionKVStore` |
+| `working_memory` | Static files + session note (see Working Memory) |
+| `retrieved_context` | Episodic + semantic memory retrieval results |
+| `critical_footer` | Output-hygiene rules (always present) |
 
----
-
-**Skills and tools**
-
-Pydantic schemas for every skill input and output. The agent validates before calling, catches mismatches before they cause silent failures downstream.
-
-Skill execution sandbox. Generated skills run in a subprocess with restricted filesystem access, no network unless explicitly declared in the skill manifest, and a hard timeout. Think of it like a controlled burn: the agent can create fire, but in a firepit.
-
-Tool call audit log. Every tool invocation, its inputs, outputs, duration, and whether it succeeded gets written to a structured log. Feeds into the dashboard. Non-negotiable for an agent that can write its own skills.
-
----
-
-**Security hardening**
-
-Secret rotation support. Right now API keys are static in `.env`. Add a mechanism to reload secrets without restarting the process, either via a file watcher on `.env` or a local Vault instance (HashiCorp Vault runs fine on Proxmox).
-
-Input sanitization on all channel adapters before anything reaches the agent. Telegram messages, Discord messages, and API payloads should be stripped of prompt injection attempts before hitting LiteLLM. A simple blocklist of injection patterns plus a max token pre-check goes a long way.
-
-Per-user rate limiting on the Telegram and Discord adapters, not just global rate limiting. Even with an allowlist of user IDs, a single user rapidly firing messages should not be able to monopolize the agent.
+Log pattern: `[PROMPT_SECTION] <name>: <N> chars`
 
 ---
 
-**Operational quality of life**
+## Operator Commands (Gap 10)
 
-Graceful shutdown handler. On SIGTERM, drain in-flight tasks, flush logs, checkpoint current memory state to disk, then exit. Right now if systemd restarts the process mid-conversation, that context is gone.
+**File:** `core/commands.py`
 
-Configuration hot reload. Settings like heartbeat interval, active hours, and model temperature should be changeable without a restart. A `SIGHUP` handler that re-reads `settings.yaml` is enough.
+Intercepted before the LLM — no tokens consumed:
 
-Cost tracking. Every Claude/GPT-4 call has a dollar cost. Track tokens in/out per model per day, estimate spend, and surface it on the dashboard. With Ollama as primary this stays low, but fallback storms can get expensive fast.
+| Command | Handler |
+|---------|---------|
+| `/skills list` | Lists all registered skills + descriptions |
+| `/doctor` | Health check of all components |
+| `/memory search <q>` | Searches episodic + semantic memory |
+| `/memory stats` | Collection sizes |
+| `/compact` | Triggers summarization now |
+| `/resume [id]` | Lists sessions or replays a transcript |
+| `/plan` | Enters plan mode |
+| `/approve` | Executes pending plan step-by-step |
+| `/help` | Lists all commands |
 
 ---
 
-Feed all of the above as a single structured prompt to the agent with your existing README as context. Frame it as: "retrofit these capabilities into the existing architecture, propose file locations for each new component, and flag any conflicts with existing modules." It will give you a solid implementation plan without having to redesign from scratch.
+## Plan Mode (Gap 3)
 
-Yes, absolutely. Grafana is overkill here and adds operational overhead you do not need. Building observability directly into your existing FastAPI + React dashboard is the cleaner approach and fits your local-first philosophy perfectly.
+**Files:** `core/plan_mode.py`, `core/agent.py`, `core/commands.py`
 
-Here is the architecture for a homegrown observability layer that lives entirely inside your existing stack:
+- `/plan` activates `PlanModeState` on the agent
+- While active, all tools are hidden from the LLM — it proposes a numbered list instead
+- Steps are parsed with `^\s*\d+\.\s+(.+)$` and stored in `plan_mode_state.pending_plan`
+- `/approve` exits plan mode, then calls `agent.process_message(session, step)` once per step (N round-trips, full tool access per step)
+- Results returned as `**Step N:** description\n→ result`
 
-**The core pattern**
+---
 
-Every agent action emits an event to an internal event bus (a simple asyncio `Queue`). A collector consumes that queue and writes to three places: SQLite for persistence, an in-memory ring buffer for the live feed, and a WebSocket broadcaster for the dashboard. No external dependencies.
+## Permission Layer (Gap 1)
 
-```
-Agent action → EventBus (asyncio Queue)
-                    ↓
-              EventCollector
-              ↙      ↓       ↘
-         SQLite   RingBuffer  WebSocket
-         (persist) (live feed) (dashboard push)
-```
+**File:** `skills/permissions.py`
 
-**What to store in SQLite**
-
-Three tables cover everything:
-
-`events` table: timestamp, trace_id, event_type, component, payload (JSON), duration_ms, success bool. This is your audit log and the source for all charts.
-
-`metrics` table: timestamp, metric_name, value, labels (JSON). Aggregated counts and gauges written every 60 seconds by a background task. LLM call count, token totals, memory hit rate, cost estimate, fallback count.
-
-`traces` table: trace_id, started_at, completed_at, channel, model_used, total_tokens, memory_hits, tools_invoked (JSON array), success bool. One row per end-to-end request. This is what powers the request timeline view.
-
-SQLite is sufficient here. You are not at Postgres scale. A week of dense agent activity is maybe 50MB. Add a simple retention job that deletes rows older than 30 days.
-
-**Event types to instrument**
+`PermissionPolicy` dataclass controls which skills the LLM can see:
 
 ```python
-class EventType(str, Enum):
-    # LLM
-    LLM_CALL_START = "llm.call.start"
-    LLM_CALL_END = "llm.call.end"
-    LLM_FALLBACK = "llm.fallback"
-    
-    # Memory
-    MEMORY_QUERY = "memory.query"
-    MEMORY_HIT = "memory.hit"
-    MEMORY_MISS = "memory.miss"
-    MEMORY_WRITE = "memory.write"
-    
-    # Tools / Skills
-    TOOL_INVOKE = "tool.invoke"
-    TOOL_COMPLETE = "tool.complete"
-    TOOL_ERROR = "tool.error"
-    SKILL_INVOKE = "skill.invoke"
-    
-    # Heartbeat
-    HEARTBEAT_START = "heartbeat.start"
-    HEARTBEAT_COMPLETE = "heartbeat.complete"
-    HEARTBEAT_MISS = "heartbeat.miss"
-    
-    # Channels
-    MESSAGE_RECEIVED = "channel.message.received"
-    MESSAGE_SENT = "channel.message.sent"
-    
-    # System
-    FALLBACK_TRIGGERED = "system.fallback"
-    CIRCUIT_OPEN = "system.circuit.open"
-    ERROR = "system.error"
+PermissionPolicy(
+    deny_names={"run_command"},          # block specific skills
+    deny_prefixes={"internal_"},         # block by name prefix
+    allow_only={"read_file", "search"},  # whitelist (overrides denies)
+)
 ```
 
-**The event emitter (drops into every component)**
+Applied via `filter_schemas(schemas, policy)` before schemas are passed to the LLM. Sub-agents use `allow_only` to enforce isolation.
 
+---
+
+## Typed Tool Contracts (Gap 2)
+
+**File:** `skills/registry.py`
+
+`SkillRegistration` dataclass on every registered skill:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `is_read_only` | bool | Safe to run concurrently |
+| `concurrency_safe` | bool | No shared state side-effects |
+| `description_fn` | callable\|None | Dynamic description based on context |
+
+Used by the parallel tool executor and the permission layer.
+
+---
+
+## Parallel Read-Only Tools (Gap 11)
+
+**File:** `core/agent.py`
+
+When the LLM returns multiple tool calls in one response:
+- Tools with `is_read_only=True` and `concurrency_safe=True` → `asyncio.gather()` (concurrent)
+- All other tools → serial execution in order
+
+Reduces latency when the agent reads multiple files or searches memory simultaneously.
+
+---
+
+## Dynamic Tool Routing (Gap 4)
+
+**File:** `skills/registry.py`
+
+When more than 10 skills are registered, `get_relevant_schemas(query, max_tools=10)` uses keyword scoring to select the most relevant subset. This prevents context bloat and keeps the LLM focused.
+
+Log pattern: `[TOOL_ROUTING] query=... selected=N/M skills`
+
+---
+
+## Hook Framework (Gap 12)
+
+**File:** `core/hooks.py`
+
+`HookRegistry` supports two hook types:
+
+| Hook | Behaviour |
+|------|-----------|
+| `pre_tool_use` | Blocking — can veto tool execution by raising `HookVeto` |
+| `permission_request` | Blocking — for interactive approval flows |
+| Any other name | Fire-and-forget (non-blocking background task) |
+
+Register hooks at startup in `main.py`:
 ```python
-# core/telemetry.py
-import asyncio, time, uuid
-from dataclasses import dataclass, field
-from typing import Any
-
-@dataclass
-class Event:
-    event_type: str
-    component: str
-    trace_id: str
-    payload: dict = field(default_factory=dict)
-    duration_ms: float = 0
-    success: bool = True
-    timestamp: float = field(default_factory=time.time)
-
-class EventBus:
-    _queue: asyncio.Queue = asyncio.Queue()
-    
-    @classmethod
-    async def emit(cls, event: Event):
-        await cls._queue.put(event)
-    
-    @classmethod
-    def emit_sync(cls, event: Event):
-        cls._queue.put_nowait(event)
-
-# Usage anywhere in the codebase:
-await EventBus.emit(Event(
-    event_type=EventType.LLM_CALL_END,
-    component="agent.llm",
-    trace_id=ctx.trace_id,
-    payload={"model": "ollama/qwen2.5:32b", "tokens_in": 420, "tokens_out": 183},
-    duration_ms=2340,
-    success=True
-))
+hook_registry.register("pre_tool_use", my_audit_hook)
 ```
 
-**Dashboard panels to build in React**
+---
 
-Live activity feed: a scrolling list of events from the WebSocket, newest at top, color-coded by event type. Teal for memory ops, blue for LLM calls, amber for tools, red for errors. Each row shows timestamp, trace ID (clickable), component, and a short human-readable summary generated from the event payload.
+## Token Budget (Gap 9)
 
-Request trace view: click any trace ID and get a waterfall timeline for that entire request. Gateway received → memory query (Xms) → LLM call (Xms, model Y, Z tokens) → tool invoke → response sent. Similar to what Jaeger shows but yours, in your dashboard.
+**Files:** `core/config.py`, `core/llm.py`, `core/agent.py`
 
-LLM panel: calls per hour bar chart, model distribution pie (Ollama vs Claude vs GPT-4), average latency per model, token usage over time, estimated daily cost (hardcode $/token rates per model, calculate locally).
+- `MODEL_CONTEXT_WINDOW` (default 32768) set in `.env`
+- `TOKEN_BUDGET_WARN_THRESHOLD` (default 0.8): logs WARNING when input tokens exceed threshold
+- `TOKEN_BUDGET_SUMMARIZE_THRESHOLD` (default 0.7): triggers summarization when cumulative session tokens exceed threshold
+- Cumulative session token totals tracked in `agent._session_tokens[session_id]`
 
-Memory panel: hit rate over time line chart, Qdrant collection size, top retrieved memory chunks by frequency, write volume per hour.
+Log pattern: `[TOKEN_BUDGET] Session abc: 26000/32768 input tokens (79%)`
 
-Heartbeat health: a simple grid of the last 48 heartbeat slots (30-min intervals during active hours). Green = ran and found nothing, amber = ran and sent alert, red = missed. At a glance you know if the scheduler is healthy.
+---
 
-Error log: last 100 errors with full payload, component, and trace ID. Filterable by component. No digging through log files.
+## Bash Validator (Gap 7)
 
-System health strip at the top of the dashboard: Ollama status (responding / degraded / down), Qdrant (connected / disconnected), Gmail token (valid / expired), NFS mount (reachable / unreachable), circuit breaker states. Updates every 10 seconds via WebSocket.
+**File:** `skills/sandbox.py` (wired into `SandboxExecutor.execute_command()`)
 
-**WebSocket push from FastAPI**
+Pre-flight check before any shell command executes. Blocks patterns like `rm -rf /`, `:(){ :|:& };:` (fork bombs), and other destructive commands. Returns a safe error string without executing.
 
-```python
-# api/websocket.py - add alongside existing handler
-class ObservabilityBroadcaster:
-    clients: set[WebSocket] = set()
-    
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.clients.add(ws)
-        # send last 100 events from ring buffer on connect
-        await ws.send_json({"type": "init", "events": ring_buffer.last(100)})
-    
-    async def broadcast(self, event: Event):
-        dead = set()
-        for client in self.clients:
-            try:
-                await client.send_json(event.__dict__)
-            except:
-                dead.add(client)
-        self.clients -= dead
-    
-    # Collector calls this for every event coming off the EventBus queue
-```
+---
 
-**What this gives you that Grafana cannot**
+## Session K/V Store (Gap 5)
 
-The trace waterfall tied to a conversation thread is something Grafana cannot do without significant configuration. You can click a Telegram message in the activity feed and see the exact chain of everything the agent did to respond to it: which memories it retrieved, which model it called, how long each step took, what the fallback chain looked like. That is genuinely more useful than a generic metrics dashboard.
+**Files:** `memory/session_kv.py`, `skills/local/session_memory.py`
 
-You also get the ability to add domain-specific panels that make sense for your agent specifically, like a "skill invocation heatmap" showing which auto-generated skills are actually being used, or a "memory staleness" view showing chunks that have not been retrieved in 30 days and are candidates for pruning.
+Per-session JSON-backed key-value store at `data/session_kv/<session_id>.json`. Injected into the system prompt via the `session_memory` PromptBuilder section.
 
-The total additional dependencies for all of this: `aiosqlite` for async SQLite access, nothing else. Everything else is already in your stack.
+Skills: `set_session_memory(session_id, key, value)` / `get_session_memory(session_id, key)`
+
+---
+
+## Durable Transcripts (Gap 13)
+
+**File:** `storage/transcripts.py`
+
+Append-only JSONL at `data/transcripts/<session_id>.jsonl`. Records 4 entry types:
+- `user` — incoming message
+- `assistant` — final response
+- `tool_call` — tool invoked (name + arguments)
+- `tool_result` — tool output (truncated to 500 chars)
+
+Accessible via `/resume` command.
+
+---
+
+## Sub-Agents (Gap 6)
+
+**Files:** `skills/local/subagent.py`, `core/task_tracker.py`
+
+`spawn_subagent(task, tools)` creates a child `Agent` with `PermissionPolicy(allow_only=set(tools))`. The sub-agent runs synchronously (awaited inline) and returns its response as a string. Dependencies injected at startup via `set_subagent_dependencies(llm, memory, executor)`.
+
+`TaskTracker` provides PENDING → RUNNING → DONE/FAILED lifecycle tracking for subagent coordination.
+
+Log pattern: `[SUBAGENT] Spawning | session=subagent-abc123 | allow_only=['read_file']`
+
+---
+
+## MCP Server Mode (Gap 8)
+
+**File:** `tools/mcp_server.py`
+
+`python main.py --mcp` starts a JSON-RPC 2.0 stdio server implementing the MCP 2024-11-05 protocol:
+- `initialize` / `notifications/initialized` handshake
+- `tools/list` — returns all registered skills as MCP tools
+- `tools/call` — invokes a skill and returns result as text content
+
+Skill errors are returned as content (not RPC errors), per MCP spec. The normal agent mode is completely unaffected by this flag.
+
+---
+
+## Working Memory Files (Gap 15)
+
+**Files:** `skills/local/session_notes.py`, `core/prompt_builder.py`, `core/agent.py`
+
+Three static files are read from disk on every turn and injected as the `working_memory` prompt section:
+- `data/CURRENT_TASK.md`
+- `data/RUNBOOK.md`
+- `data/KNOWN_ISSUES.md`
+
+Additionally, the session note (`data/SESSION_NOTES/<session_id>.md`) is appended if present. All are optional — missing files are silently skipped.
+
+Skills: `set_session_note(session_id, content)` / `get_session_note(session_id)`
+
+Override notes directory in tests via `SESSION_NOTES_DIR` env var.
+
+---
+
+## Memory System
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Vector store | `memory/vector_store.py` | Qdrant client (local or HTTP) |
+| Memory manager | `memory/memory_manager.py` | Episodic + semantic CRUD with importance scoring and recency decay |
+| Session K/V | `memory/session_kv.py` | Exact-recall per-session store |
+| Static loader | `memory/static_loader.py` | Chunks `USER.md`, `MEMORY.md` into semantic memory at startup |
+| Summarizer | `memory/summarizer.py` | Compresses old turns when threshold is reached |
+| Semantic extractor | `memory/semantic_extractor.py` | Extracts facts from each turn into semantic memory |
+| Lesson extractor | `memory/lesson_extractor.py` | Detects corrections, writes `data/LESSONS.md` |
+| Combined extractor | `memory/combined_extractor.py` | Single LLM call for facts + lessons (preferred) |

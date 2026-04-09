@@ -16,12 +16,12 @@ Build a structured, extensible framework for the agent to use tools/skills. This
 - `api/*`
 
 ## Acceptance Criteria
-- [ ] Implement a `@skill(name, description)` decorator that registers Python async functions.
-- [ ] Parse function signatures and docstrings to automatically generate standard JSON Schemas for LiteLLM/OpenAI tool calling formats.
-- [ ] Implement `SkillExecutor.execute(name, kwargs)` that runs the tool safely.
-- [ ] Wrap skill execution in a hard timeout (e.g., `asyncio.wait_for`).
-- [ ] Emit `TOOL_INVOKE`, `TOOL_COMPLETE`, and `TOOL_ERROR` telemetry events.
-- [ ] TDD all parsing and execution paths with comprehensive unit tests in `tests/skills/`.
+- [x] Implement a `@skill(name, description)` decorator that registers Python async functions.
+- [x] Parse function signatures and docstrings to automatically generate standard JSON Schemas for LiteLLM/OpenAI tool calling formats.
+- [x] Implement `SkillExecutor.execute(name, kwargs)` that runs the tool safely.
+- [x] Wrap skill execution in a hard timeout (e.g., `asyncio.wait_for`).
+- [x] Emit `TOOL_INVOKE`, `TOOL_COMPLETE`, and `TOOL_ERROR` telemetry events.
+- [x] TDD all parsing and execution paths with comprehensive unit tests in `tests/skills/`.
 
 ## Development Methodology Reminder
 Follow the rules in `AGENTS.md` strictly:

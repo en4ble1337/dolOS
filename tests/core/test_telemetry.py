@@ -47,9 +47,25 @@ class TestEventType:
         assert EventType.CIRCUIT_OPEN == "system.circuit.open"
         assert EventType.ERROR == "system.error"
 
+    def test_skill_extraction_events_exist(self):
+        assert EventType.SKILL_EXTRACTION_START == "skill.extraction.start"
+        assert EventType.SKILL_EXTRACTION_SKIP == "skill.extraction.skip"
+        assert EventType.SKILL_EXTRACTION_DUPLICATE == "skill.extraction.duplicate"
+        assert EventType.SKILL_EXTRACTION_CREATED == "skill.extraction.created"
+        assert EventType.SKILL_EXTRACTION_ERROR == "skill.extraction.error"
+
+    def test_skill_auto_fix_events_exist(self):
+        assert EventType.SKILL_AUTO_FIX_ATTEMPT == "skill.auto_fix.attempt"
+        assert EventType.SKILL_AUTO_FIX_SUCCESS == "skill.auto_fix.success"
+        assert EventType.SKILL_AUTO_FIX_FAILED == "skill.auto_fix.failed"
+
+    def test_user_profile_update_events_exist(self):
+        assert EventType.USER_PROFILE_UPDATE_START == "user.profile.update.start"
+        assert EventType.USER_PROFILE_UPDATE_COMPLETE == "user.profile.update.complete"
+
     def test_total_event_count(self):
         """Ensure we have exactly the right number of event types."""
-        assert len(EventType) == 33
+        assert len(EventType) == 43
 
 
 class TestEvent:
