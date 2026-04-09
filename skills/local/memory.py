@@ -19,6 +19,8 @@ def set_memory_manager(memory) -> None:
         "Use this to recall past conversations, facts, or context before answering. "
         "memory_type can be 'episodic' (recent conversations) or 'semantic' (long-term facts)."
     ),
+    read_only=True,
+    concurrency_safe=True,
 )
 def search_memory(query: str, memory_type: str = "episodic", limit: int = 5) -> str:
     """Search episodic or semantic memory and return matching entries."""

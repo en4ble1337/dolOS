@@ -7,6 +7,7 @@ from rich.markdown import Markdown
 
 from channels import Channel
 from core.agent import Agent
+from core.context_refs import expand_refs
 from core.telemetry import Event, EventBus, EventType
 
 if TYPE_CHECKING:
@@ -50,7 +51,8 @@ class TerminalChannel(Channel):
                 if not user_input.strip():
                     continue
 
-                await self._process_turn(user_input)
+                expanded = expand_refs(user_input)
+                await self._process_turn(expanded)
 
             except (EOFError, KeyboardInterrupt):
                 break

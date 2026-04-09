@@ -24,6 +24,8 @@ from skills.registry import skill
         "structured fact that you want to retrieve precisely (not by semantic search). "
         "Values are plain strings. Keys should be short snake_case identifiers."
     ),
+    read_only=False,
+    concurrency_safe=False,
 )
 async def set_session_memory(session_id: str, key: str, value: str) -> str:
     """Set a key-value pair in the session K/V store.
@@ -46,6 +48,8 @@ async def set_session_memory(session_id: str, key: str, value: str) -> str:
         "Retrieve a value you previously stored in your session memory by its exact key. "
         "Returns the value as a string, or an empty string if the key does not exist."
     ),
+    read_only=True,
+    concurrency_safe=True,
 )
 async def get_session_memory(session_id: str, key: str) -> str:
     """Get a value from the session K/V store by key.
@@ -69,6 +73,8 @@ async def get_session_memory(session_id: str, key: str) -> str:
         "List all key-value pairs currently stored in your session memory. "
         "Useful for reviewing what you have already saved before adding new entries."
     ),
+    read_only=True,
+    concurrency_safe=True,
 )
 async def list_session_memory(session_id: str) -> str:
     """List all key-value pairs in the session store.

@@ -36,11 +36,11 @@ Any agent or developer resuming this work should:
 
 | Gap | Status | Files | Notes |
 |-----|--------|-------|-------|
-| **Gap 2 — Typed Tool Contracts** | ⬜ Pending | `skills/registry.py`, `skills/local/*.py` | Extend `SkillRegistration` with `is_read_only`, `concurrency_safe`, `description_fn`. Update `@skill` decorator. |
-| **Gap 14 — Prompt Assembly Layers** | ⬜ Pending | `core/prompt_builder.py` (new), `core/agent.py` | `PromptBuilder` with 6 named sections. Move inline prompt assembly out of `agent.py`. Wire in Session K/V from Gap 5. |
-| **Gap 13 — Durable Transcripts** | ⬜ Pending | `storage/transcripts.py` (new), `storage/__init__.py` (new), `core/agent.py`, `core/commands.py` | Append-only JSONL transcripts. Wire `/resume` command. |
+| **Gap 2 — Typed Tool Contracts** | ✅ Done | `skills/registry.py`, `skills/local/*.py` | `SkillRegistration` dataclass with `is_read_only`, `concurrency_safe`, `description_fn`. `@skill` decorator updated. All 7 skills annotated. Tests: `tests/skills/test_skill_registration.py` |
+| **Gap 14 — Prompt Assembly Layers** | ✅ Done | `core/prompt_builder.py` (new), `core/agent.py` | `PromptBuilder` with 6 named sections. Inline prompt removed from `agent.py`. Session K/V from Gap 5 wired into `session_memory` section. Per-section `[PROMPT_SECTION]` telemetry. Tests: `tests/core/test_prompt_builder.py` |
+| **Gap 13 — Durable Transcripts** | ✅ Done | `storage/transcripts.py` (new), `storage/__init__.py` (new), `core/agent.py`, `core/commands.py` | Append-only JSONL under `data/transcripts/<session_id>.jsonl`. 4 entry types recorded. `/resume [session_id]` command added. Tests: `tests/storage/test_transcripts.py` |
 
-> **Phase 2 → 3 gate:** `PromptBuilder` unit tests pass; 6 named prompt sections confirmed; `is_read_only` metadata on all skills.
+> **Phase 2 → 3 gate:** ✅ CLEARED — `PromptBuilder` unit tests pass; 6 named prompt sections confirmed; `is_read_only` metadata on all skills. Baseline 11 failures unchanged (389 passing).
 
 ---
 
@@ -50,13 +50,15 @@ Any agent or developer resuming this work should:
 
 | Gap | Status | Files | Notes |
 |-----|--------|-------|-------|
-| **Gap 1 — Permission Layer** | ⬜ Pending | `skills/permissions.py` (new), `skills/registry.py`, `core/agent.py` | `PermissionPolicy` dataclass with `deny_names`, `deny_prefixes`, `allow_only`. `filter_schemas()` wired into Agent. |
-| **Gap 4 — Dynamic Tool Routing** | ⬜ Pending | `skills/registry.py`, `core/agent.py` | `get_relevant_schemas(query, max_tools=10)` — keyword scoring. Activates only when registry > 10 tools. |
-| **Gap 11 — Parallel Read-Only Tools** | ⬜ Pending | `core/agent.py` | Partition tool calls into `concurrent_batch` (read-only + concurrency_safe) vs `serial_queue`. Use `asyncio.gather()`. |
-| **Gap 12 — Hook Framework** | ⬜ Pending | `core/hooks.py` (new), `core/agent.py` | `HookRegistry` with blocking hooks (`pre_tool_use`, `permission_request`) and fire-and-forget hooks. |
-| **Gap 15 — Working Memory Files** | ⬜ Pending | `memory/static_loader.py`, `skills/local/session_notes.py` (new) | Inject `CURRENT_TASK.md`, `RUNBOOK.md`, `KNOWN_ISSUES.md`. `SESSION_NOTES/<id>.md`. |
+| **Gap 1 — Permission Layer** | ✅ Done | `skills/permissions.py` (new), `core/agent.py` | `PermissionPolicy` dataclass with `deny_names`, `deny_prefixes`, `allow_only`. `filter_schemas()` wired into Agent `__init__`. Tests: `tests/skills/test_permissions.py` (23 tests). |
+| **Gap 4 — Dynamic Tool Routing** | ✅ Done | `skills/registry.py`, `core/agent.py` | `get_relevant_schemas(query, max_tools=10)` — keyword scoring. Activates only when registry > 10 tools. `[TOOL_ROUTING]` debug log emitted. Tests: `tests/skills/test_tool_routing.py` (13 tests). |
+| **Gap 11 — Parallel Read-Only Tools** | ✅ Done | `core/agent.py` | Partition tool calls into `concurrent_batch` (read-only + concurrency_safe) vs `serial_queue`. `asyncio.gather()` for concurrent batch. Tests: `tests/core/test_parallel_tools.py` (10 tests). |
+| **Gap 12 — Hook Framework** | ✅ Done | `core/hooks.py` (new), `core/agent.py` | `HookRegistry` with blocking hooks (`pre_tool_use`, `permission_request`) and fire-and-forget hooks. `HookVeto` propagates from blocking hooks. `hook_registry` wired into Agent `__init__`. Tests: `tests/core/test_hooks.py` (17 tests). |
+| **Gap 15 — Working Memory Files** | ✅ Done | `skills/local/session_notes.py` (new), `core/prompt_builder.py`, `core/agent.py`, `main.py` | `set_session_note` / `get_session_note` skills write/read `data/SESSION_NOTES/<id>.md`. `working_memory` section injected into PromptBuilder from `CURRENT_TASK.md`, `RUNBOOK.md`, `KNOWN_ISSUES.md` + session note. Tests: `tests/skills/test_session_notes.py`, `tests/core/test_prompt_builder.py` (working_memory tests added) |
 
-> **Phase 3 → 4 gate:** `PermissionPolicy(allow_only={"read_file"})` blocks `run_command`; hook veto test passes.
+> **Phase 3 → 4 gap wiring note:** `session_kv`, `transcript_store`, `hook_registry`, and `plan_mode_state` are now all wired into Agent in `main.py`. `CommandRouter` instantiated at module level and exposed on `app.state`. Baseline 11 failures unchanged (527 passing).
+
+> **Phase 3 → 4 gate:** ✅ CLEARED — `PermissionPolicy(allow_only={"read_file"})` blocks `run_command` (test_gate_allow_only_blocks_run_command passes); hook veto test passes (TestBlockingHooks::test_blocking_hook_veto_propagates passes). Baseline 11 failures unchanged (452 passing).
 
 ---
 
@@ -66,9 +68,9 @@ Any agent or developer resuming this work should:
 
 | Gap | Status | Files | Notes |
 |-----|--------|-------|-------|
-| **Gap 3 — Plan Mode** | ⬜ Pending | `core/plan_mode.py` (new), `core/agent.py`, `core/commands.py` | `/plan` enters plan mode (read-only policy). `/approve` exits and executes. |
-| **Gap 8 — MCP Server** | ⬜ Pending | `tools/mcp_server.py` (new), `main.py` | Expose skill registry over MCP stdio. `--mcp` startup flag. |
-| **Gap 6 — Subagents** | ⬜ Pending | `skills/local/subagent.py` (new), `core/task_tracker.py` (new) | Phase A: `spawn_subagent(task, tools)`. Phase B: `TaskTracker` with `task_create/update/list`. |
+| **Gap 3 — Plan Mode** | ✅ Done | `core/plan_mode.py` (new), `core/agent.py`, `core/commands.py`, `main.py` | `/plan` enters plan mode (no tools passed to LLM). `/approve` exits and calls `process_message` per step. `plan_mode_state` wired into Agent and CommandRouter. Tests: `tests/core/test_plan_mode.py` |
+| **Gap 8 — MCP Server** | ✅ Done | `tools/mcp_server.py` (new), `main.py` | MCP JSON-RPC stdio server. `--mcp` flag skips FastAPI/channels and runs `MCPServerRunner`. Tests: `tests/tools/test_mcp_server.py` |
+| **Gap 6 — Subagents** | ✅ Done | `skills/local/subagent.py` (new), `core/task_tracker.py` (new), `main.py` | `spawn_subagent(task, tools)` creates scoped Agent with `PermissionPolicy(allow_only=tools)`. `TaskTracker` PENDING→RUNNING→DONE/FAILED lifecycle. `set_subagent_dependencies` called at startup. Tests: `tests/skills/test_subagent.py`, `tests/core/test_task_tracker.py` |
 
 ---
 
@@ -175,6 +177,19 @@ Any agent or developer resuming this work should:
   - Ask the agent: *"Spawn a subagent to list files in the current directory"*
   - Expected: agent calls `spawn_subagent`, result returned inline
   - Check logs for `[SUBAGENT]` trace showing scoped permission policy
+
+---
+
+## Phase 5 — hermes-agent Gaps
+
+> **Gate:** Phase 4 fully merged. All three Phase 5 gaps are independent — fully parallelizable (Agents M, N, O).
+> **Phase 5 → done gate:** Each gap has its own test file. No shared file conflicts.
+
+| Gap | Status | Files | Notes |
+|-----|--------|-------|-------|
+| **Gap H1 — Structured Context Compression** | ✅ Done | `core/context_compressor.py` (new), `core/agent.py` | 4-phase: prune tool outputs → head/tail protect → structured summarize → iterative merge. Wired into token-budget warning path in agent loop. 18 tests pass. |
+| **Gap H4 — `@` Context References** | ✅ Done | `core/context_refs.py` (new), `channels/terminal.py` | `@file:`, `@folder:`, `@diff`, `@staged`, `@git:N`, `@url:` expansion before prompt reaches agent. Sensitive path blocking + size limits. 27 tests pass. |
+| **Gap H5 — OpenAI-Compatible API** | ✅ Done | `api/routes/v1_chat.py` (new), `main.py` | `POST /v1/chat/completions` shim over `agent.process_message()`. Session ID from `user` field. `stream=true` → 501. 7 tests pass. |
 
 ---
 

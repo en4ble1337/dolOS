@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from core.agent import Agent
     from memory.memory_manager import MemoryManager
     from core.telemetry import EventBus
+    from storage.transcripts import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,12 @@ class CommandRouter:
         agent: "Agent",
         memory: "MemoryManager",
         event_bus: "EventBus | None" = None,
+        transcript_store: "TranscriptStore | None" = None,
     ) -> None:
         self.agent = agent
         self.memory = memory
         self.event_bus = event_bus
+        self.transcript_store = transcript_store
         self._handlers: dict[str, _Handler] = {}
         self._register_handlers()
 
@@ -66,6 +69,9 @@ class CommandRouter:
                 "skills list": self._cmd_skills,
                 "doctor": self._cmd_doctor,
                 "help": self._cmd_help,
+                "resume": self._cmd_resume,
+                "plan": self._cmd_plan,
+                "approve": self._cmd_approve,
             }
         )
 
@@ -196,5 +202,83 @@ class CommandRouter:
             "  /compact                — trigger conversation summarization now\n"
             "  /skills list            — list all registered skills\n"
             "  /doctor                 — system health check\n"
+            "  /resume [session_id]    — list sessions or view a session transcript\n"
+            "  /plan                   — enter plan mode (agent proposes steps without executing)\n"
+            "  /approve                — exit plan mode and execute the pending plan\n"
             "  /help                   — show this message\n"
         )
+
+    async def _cmd_resume(self, session_id: str, args: str) -> str:
+        """List all sessions or show the last N entries for a specific session."""
+        if self.transcript_store is None:
+            return "Transcript store not configured — /resume is unavailable."
+
+        target_id = args.strip()
+        if not target_id:
+            # No session given: list the 10 most recent sessions
+            sessions = self.transcript_store.list_sessions()
+            if not sessions:
+                return "No transcripts found. Start a conversation to create one."
+            lines = ["**Recent sessions** (latest first):"]
+            for s in sessions[-10:][::-1]:
+                lines.append(f"  {s['session_id']}  ({s['entry_count']} entries)")
+            lines.append("\nUse /resume <session_id> to view a session.")
+            return "\n".join(lines)
+
+        # Specific session requested: show last 10 entries
+        entries = self.transcript_store.read_session(target_id)
+        if not entries:
+            return f"No transcript found for session: {target_id!r}"
+        last_entries = entries[-10:]
+        lines = [f"**Transcript for {target_id}** (last {len(last_entries)} of {len(entries)} entries):"]
+        for e in last_entries:
+            ts = e.get("ts", "")[:19]  # trim to seconds
+            etype = e.get("type", "?")
+            if etype == "user":
+                lines.append(f"  [{ts}] 👤 {e.get('content', '')[:120]}")
+            elif etype == "assistant":
+                lines.append(f"  [{ts}] 🤖 {e.get('content', '')[:120]}")
+            elif etype == "tool_call":
+                lines.append(f"  [{ts}] 🔧 {e.get('name', '')}({e.get('arguments', {})})")
+            elif etype == "tool_result":
+                lines.append(f"  [{ts}] ✅ {e.get('name', '')} → {str(e.get('content', ''))[:80]}")
+            else:
+                lines.append(f"  [{ts}] [{etype}] {str(e)[:120]}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Plan Mode commands
+    # ------------------------------------------------------------------
+
+    async def _cmd_plan(self, session_id: str, args: str) -> str:
+        """Enter plan mode: the agent proposes a numbered plan instead of executing."""
+        state = getattr(self.agent, "plan_mode_state", None)
+        if state is None:
+            return "Plan mode is not configured on this agent."
+        state.enter()
+        return (
+            "\U0001f5d3\ufe0f **Plan mode activated.** The agent will now propose a numbered "
+            "plan instead of executing actions.\n"
+            "Send your request, then /approve to execute the plan."
+        )
+
+    async def _cmd_approve(self, session_id: str, args: str) -> str:
+        """Exit plan mode and execute each pending plan step via process_message."""
+        state = getattr(self.agent, "plan_mode_state", None)
+        if state is None:
+            return "Plan mode is not configured on this agent."
+        if not state.active:
+            return "Not in plan mode. Use /plan first, then send your request."
+        if not state.pending_plan:
+            return (
+                "No pending plan to approve. "
+                "While in /plan mode, send a request so the agent proposes steps first."
+            )
+        steps = list(state.pending_plan)
+        state.exit()  # exit plan mode before executing so steps run with full tools
+        results: list[str] = []
+        for i, step in enumerate(steps, 1):
+            logger.info("[PLAN_APPROVE] Executing step %d/%d: %s", i, len(steps), step[:80])
+            result = await self.agent.process_message(session_id, step)
+            results.append(f"**Step {i}:** {step}\n\u2192 {result[:300]}")
+        return "\n\n".join(results) if results else "Plan executed (no steps)."

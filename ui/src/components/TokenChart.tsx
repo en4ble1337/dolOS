@@ -6,6 +6,19 @@ interface TokenChartProps {
   events: TelemetryEvent[];
 }
 
+function getTotalTokens(payload: TelemetryEvent['payload']): number {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'total_tokens' in payload &&
+    typeof payload.total_tokens === 'number'
+  ) {
+    return payload.total_tokens;
+  }
+
+  return 0;
+}
+
 export const TokenChart: React.FC<TokenChartProps> = ({ events }) => {
   const data = useMemo(() => {
     // Filter to llm.call.end events and map to a simplified format
@@ -16,7 +29,7 @@ export const TokenChart: React.FC<TokenChartProps> = ({ events }) => {
         const timeStr = new Date(e.timestamp).toISOString().split('T')[1].split('.')[0];
         return {
           time: timeStr,
-          tokens: e.payload?.total_tokens || 0,
+          tokens: getTotalTokens(e.payload),
         };
       })
       .slice(-20); // Show last 20

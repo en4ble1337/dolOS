@@ -19,6 +19,8 @@ _GENERATED_DIR = Path(__file__).parent / "generated"
         "The `code` parameter must be a complete Python async function named exactly `handler` "
         "that accepts keyword arguments and returns a string result."
     ),
+    read_only=False,
+    concurrency_safe=False,
 )
 async def create_skill(name: str, description: str, code: str) -> str:
     """Persist a new skill as a Python file and register it in the current process.
@@ -96,6 +98,8 @@ from skills.registry import skill
         "identify the bug, then call create_skill with the same name and corrected code to "
         "overwrite it. Only works for agent-created skills in the generated/ directory."
     ),
+    read_only=True,
+    concurrency_safe=True,
 )
 async def fix_skill(name: str) -> str:
     """Return the source of a generated skill file for review and rewriting.

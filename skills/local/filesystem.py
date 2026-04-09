@@ -20,7 +20,7 @@ def _ensure_safe_path(file_path: str) -> Path:
         )
     return target_path
 
-@skill(name="read_file", description="Read the contents of a file within the sandbox.")
+@skill(name="read_file", description="Read the contents of a file within the sandbox.", read_only=True, concurrency_safe=True)
 def read_file(file_path: str) -> str:
     """Read the contents of a file from the file system."""
     safe_path = _ensure_safe_path(file_path)
@@ -33,6 +33,8 @@ def read_file(file_path: str) -> str:
 @skill(
     name="write_file",
     description="Write content to a file within the sandbox. Overwrites existing files.",
+    read_only=False,
+    concurrency_safe=False,
 )
 def write_file(file_path: str, content: str) -> str:
     """Write string content to a file on the file system."""

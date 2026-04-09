@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from api.routes.chat import chat_router
+from api.routes.v1_chat import v1_router
 from api.routes.health import router as health_router
 from api.routes.memory import router as memory_router
 from api.routes.observability import router as obs_router
@@ -22,17 +23,22 @@ from channels.telegram_channel import TelegramChannel
 from channels.discord_channel import DiscordChannel
 from core.agent import Agent
 from core.alerting import AlertNotifier
+from core.commands import CommandRouter
 from core.config import Settings
 from core.heartbeat import HeartbeatSystem
+from core.hooks import HookRegistry
 from core.llm import LLMGateway
+from core.plan_mode import PlanModeState
 from core.telemetry import EventBus, EventCollector
 from memory.combined_extractor import CombinedTurnExtractor
 from memory.lesson_extractor import LessonExtractor
 from memory.memory_manager import MemoryManager
 from memory.semantic_extractor import SemanticExtractor
+from memory.session_kv import get_default_store as _get_session_kv
 from memory.static_loader import StaticFileLoader
 from memory.summarizer import ConversationSummarizer
 from memory.vector_store import VectorStore
+from storage.transcripts import TranscriptStore
 from heartbeat.integrations.memory_maintenance import MemoryMaintenanceTask
 from heartbeat.integrations.reflection_task import ReflectionTask
 from heartbeat.integrations.system_health import SystemHealthProbe
@@ -41,6 +47,9 @@ import skills.local.filesystem  # noqa: F401 — registers read_file, write_file
 import skills.local.system  # noqa: F401 — registers run_command, run_code
 import skills.local.meta  # noqa: F401 — registers create_skill, fix_skill
 import skills.local.memory as _memory_skill  # registers search_memory
+import skills.local.session_memory  # noqa: F401 — registers set/get_session_memory
+import skills.local.session_notes  # noqa: F401 — registers set/get_session_note
+import skills.local.subagent as _subagent_skill  # registers spawn_subagent
 import skills.local.generated  # noqa: F401 — auto-loads agent-generated skills
 from skills.executor import SkillExecutor
 from skills.registry import _default_registry as registry
@@ -58,6 +67,23 @@ _file_handler = logging.FileHandler("data/agent.log")
 _file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 logging.getLogger().addHandler(_file_handler)
 logger = logging.getLogger("main")
+
+# ------------------------------------------------------------------
+# --mcp mode: expose skill registry as an MCP stdio server.
+# Skill modules were already imported above, so the registry is
+# populated. We skip FastAPI, uvicorn, and all channel setup.
+# ------------------------------------------------------------------
+import argparse as _argparse
+_parser = _argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--mcp", action="store_true", default=False)
+_args, _ = _parser.parse_known_args()
+
+if _args.mcp:
+    from tools.mcp_server import MCPServerRunner
+    logger.info("Starting dolOS in MCP server mode (stdio)")
+    asyncio.run(MCPServerRunner(registry).run())
+    sys.exit(0)
+
 
 # Instantiate Core Components
 event_bus = EventBus()
@@ -78,6 +104,10 @@ _static_loader = StaticFileLoader(memory)
 _static_loader.index_file("data/USER.md", source_tag="user_profile")
 _static_loader.index_file("data/MEMORY.md", source_tag="long_term_decisions")
 executor = SkillExecutor(registry=registry, event_bus=event_bus)
+session_kv = _get_session_kv()
+transcript_store = TranscriptStore()
+hook_registry = HookRegistry()
+plan_mode_state = PlanModeState()
 semantic_extractor = SemanticExtractor(
     llm=llm,
     memory=memory,
@@ -110,7 +140,13 @@ agent = Agent(
     summarizer=summarizer,
     lesson_extractor=lesson_extractor,
     combined_extractor=combined_extractor,
+    session_kv=session_kv,
+    transcript_store=transcript_store,
+    hook_registry=hook_registry,
+    plan_mode_state=plan_mode_state,
 )
+_subagent_skill.set_subagent_dependencies(llm, memory, executor)
+command_router = CommandRouter(agent=agent, memory=memory, transcript_store=transcript_store)
 heartbeat = HeartbeatSystem(event_bus=event_bus)
 alert_notifier = AlertNotifier(settings)
 system_health_probe = SystemHealthProbe(event_bus=event_bus)
@@ -189,6 +225,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.heartbeat = heartbeat
     app.state.dead_man_switch = dead_man_switch
+    app.state.command_router = command_router
 
     yield
 
@@ -204,6 +241,7 @@ async def lifespan(app: FastAPI):
 # FastAPI application (for dashboard, HTTP channels, webhooks)
 app = FastAPI(lifespan=lifespan, title="dolOS API")
 app.include_router(chat_router, prefix="/api")
+app.include_router(v1_router)
 app.include_router(health_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(obs_router, prefix="/api")
