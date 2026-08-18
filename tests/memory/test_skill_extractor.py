@@ -70,19 +70,25 @@ async def test_llm_returns_should_create_false() -> None:
 
 @pytest.mark.asyncio
 async def test_valid_extraction_calls_create_skill() -> None:
-    llm = _make_llm(json.dumps({
-        "should_create": True,
-        "reason": "Reusable multi-step workflow",
-        "name": "reuse_this_pattern",
-        "description": "Combine several tools to complete a workflow.",
-        "code": "async def handler(**kwargs):\n    return 'ok'",
-        "is_read_only": False,
-        "concurrency_safe": False,
-    }))
+    llm = _make_llm(
+        json.dumps(
+            {
+                "should_create": True,
+                "reason": "Reusable multi-step workflow",
+                "name": "reuse_this_pattern",
+                "description": "Combine several tools to complete a workflow.",
+                "code": "async def handler(**kwargs):\n    return 'ok'",
+                "is_read_only": False,
+                "concurrency_safe": False,
+            }
+        )
+    )
     registry = SkillRegistry()
     extractor = SkillExtractionTask(llm=llm, registry=registry)
 
-    with patch("memory.skill_extractor.create_skill", new=AsyncMock(return_value="created")) as create_skill:
+    with patch(
+        "memory.skill_extractor.create_skill", new=AsyncMock(return_value="created")
+    ) as create_skill:
         result = await extractor.evaluate_and_extract(
             session_id="session-1",
             user_message="Do a thing",
@@ -104,15 +110,19 @@ async def test_valid_extraction_calls_create_skill() -> None:
 @pytest.mark.asyncio
 async def test_duplicate_skill_skipped() -> None:
     description = "Combine several tools to complete a workflow."
-    llm = _make_llm(json.dumps({
-        "should_create": True,
-        "reason": "Reusable multi-step workflow",
-        "name": "reuse_this_pattern",
-        "description": description,
-        "code": "async def handler(**kwargs):\n    return 'ok'",
-        "is_read_only": False,
-        "concurrency_safe": False,
-    }))
+    llm = _make_llm(
+        json.dumps(
+            {
+                "should_create": True,
+                "reason": "Reusable multi-step workflow",
+                "name": "reuse_this_pattern",
+                "description": description,
+                "code": "async def handler(**kwargs):\n    return 'ok'",
+                "is_read_only": False,
+                "concurrency_safe": False,
+            }
+        )
+    )
     registry = SkillRegistry()
     registry.set_embedder(_Embedder({description: [1.0, 0.0, 0.0]}))
     registry.register(
@@ -175,20 +185,88 @@ async def test_llm_returns_invalid_json() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_skill_failure_doesnt_crash() -> None:
-    llm = _make_llm(json.dumps({
-        "should_create": True,
-        "reason": "Reusable multi-step workflow",
-        "name": "failing_pattern",
-        "description": "Combine several tools to complete a workflow.",
-        "code": "async def handler(**kwargs):\n    return 'ok'",
-        "is_read_only": False,
-        "concurrency_safe": False,
-    }))
+async def test_string_is_read_only_is_rejected() -> None:
+    llm = _make_llm(
+        json.dumps(
+            {
+                "should_create": True,
+                "reason": "Reusable multi-step workflow",
+                "name": "bad_bool_pattern",
+                "description": "Inspect several sources and summarize them.",
+                "code": "async def handler(**kwargs):\n    return 'ok'",
+                "is_read_only": "false",
+                "concurrency_safe": False,
+            }
+        )
+    )
     registry = SkillRegistry()
     extractor = SkillExtractionTask(llm=llm, registry=registry)
 
-    with patch("memory.skill_extractor.create_skill", new=AsyncMock(side_effect=RuntimeError("boom"))) as create_skill:
+    with patch("memory.skill_extractor.create_skill", new=AsyncMock()) as create_skill:
+        result = await extractor.evaluate_and_extract(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=["a", "b", "c"],
+            trace_id="trace-1",
+        )
+
+    assert result == 0
+    create_skill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_string_concurrency_safe_is_rejected() -> None:
+    llm = _make_llm(
+        json.dumps(
+            {
+                "should_create": True,
+                "reason": "Reusable multi-step workflow",
+                "name": "bad_concurrency_bool_pattern",
+                "description": "Inspect several sources and summarize them.",
+                "code": "async def handler(**kwargs):\n    return 'ok'",
+                "is_read_only": False,
+                "concurrency_safe": "true",
+            }
+        )
+    )
+    registry = SkillRegistry()
+    extractor = SkillExtractionTask(llm=llm, registry=registry)
+
+    with patch("memory.skill_extractor.create_skill", new=AsyncMock()) as create_skill:
+        result = await extractor.evaluate_and_extract(
+            session_id="session-1",
+            user_message="Do a thing",
+            assistant_response="Done",
+            tool_calls_made=["a", "b", "c"],
+            trace_id="trace-1",
+        )
+
+    assert result == 0
+    create_skill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_skill_failure_doesnt_crash() -> None:
+    llm = _make_llm(
+        json.dumps(
+            {
+                "should_create": True,
+                "reason": "Reusable multi-step workflow",
+                "name": "failing_pattern",
+                "description": "Combine several tools to complete a workflow.",
+                "code": "async def handler(**kwargs):\n    return 'ok'",
+                "is_read_only": False,
+                "concurrency_safe": False,
+            }
+        )
+    )
+    registry = SkillRegistry()
+    extractor = SkillExtractionTask(llm=llm, registry=registry)
+
+    with patch(
+        "memory.skill_extractor.create_skill", new=AsyncMock(side_effect=RuntimeError("boom"))
+    ) as create_skill:
         result = await extractor.evaluate_and_extract(
             session_id="session-1",
             user_message="Do a thing",
@@ -203,19 +281,25 @@ async def test_create_skill_failure_doesnt_crash() -> None:
 
 @pytest.mark.asyncio
 async def test_is_read_only_and_concurrency_safe_passed_through() -> None:
-    llm = _make_llm(json.dumps({
-        "should_create": True,
-        "reason": "Reusable multi-step workflow",
-        "name": "read_only_pattern",
-        "description": "Inspect several sources and summarize them.",
-        "code": "async def handler(**kwargs):\n    return 'ok'",
-        "is_read_only": True,
-        "concurrency_safe": True,
-    }))
+    llm = _make_llm(
+        json.dumps(
+            {
+                "should_create": True,
+                "reason": "Reusable multi-step workflow",
+                "name": "read_only_pattern",
+                "description": "Inspect several sources and summarize them.",
+                "code": "async def handler(**kwargs):\n    return 'ok'",
+                "is_read_only": True,
+                "concurrency_safe": True,
+            }
+        )
+    )
     registry = SkillRegistry()
     extractor = SkillExtractionTask(llm=llm, registry=registry)
 
-    with patch("memory.skill_extractor.create_skill", new=AsyncMock(return_value="created")) as create_skill:
+    with patch(
+        "memory.skill_extractor.create_skill", new=AsyncMock(return_value="created")
+    ) as create_skill:
         result = await extractor.evaluate_and_extract(
             session_id="session-1",
             user_message="Do a thing",

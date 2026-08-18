@@ -44,9 +44,10 @@ async def run_code(code: str, timeout_seconds: float = 30.0) -> str:
         allow_network=False,
     )
     result = await sandbox.execute_code(code, policy=policy)
+    output = str(result["output"])
     if result["success"]:
-        return result["output"] if result["output"] else "Code executed successfully with no output."
-    return result["output"]
+        return output if output else "Code executed successfully with no output."
+    return output
 
 
 @skill(
@@ -70,8 +71,9 @@ async def run_command(command: str, timeout_seconds: float = 30.0) -> str:
     )
 
     result = await sandbox.execute_command(command, policy=policy)
+    output = str(result["output"])
 
     if result["success"]:
-        return result["output"] if result["output"] else "Command executed successfully with no output."
+        return output if output else "Command executed successfully with no output."
 
-    return result["output"]
+    return output

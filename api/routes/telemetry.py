@@ -11,6 +11,7 @@ router = APIRouter(tags=["telemetry"])
 
 class EventItem(BaseModel):
     """Single telemetry event."""
+
     event_type: str
     component: str
     trace_id: str
@@ -22,12 +23,14 @@ class EventItem(BaseModel):
 
 class EventsResponse(BaseModel):
     """Response for event queries."""
+
     events: list[EventItem]
     count: int
 
 
 class MetricItem(BaseModel):
     """Single aggregated metric."""
+
     timestamp: float
     metric_name: str
     value: float
@@ -36,12 +39,14 @@ class MetricItem(BaseModel):
 
 class MetricsResponse(BaseModel):
     """Response for metrics queries."""
+
     metrics: list[MetricItem]
     count: int
 
 
 class TraceDetail(BaseModel):
     """Full trace detail with associated events."""
+
     trace_id: str
     started_at: float
     completed_at: float | None
@@ -54,7 +59,7 @@ class TraceDetail(BaseModel):
     events: list[EventItem]
 
 
-def _get_collector(request: Request):
+def _get_collector(request: Request) -> Any:
     collector = getattr(request.app.state, "collector", None)
     if collector is None:
         raise HTTPException(status_code=503, detail="EventCollector not configured")
@@ -83,15 +88,17 @@ async def get_events(
         if component and e.component != component:
             continue
 
-        items.append(EventItem(
-            event_type=etype,
-            component=e.component,
-            trace_id=e.trace_id,
-            payload=e.payload,
-            duration_ms=e.duration_ms,
-            success=e.success,
-            timestamp=e.timestamp,
-        ))
+        items.append(
+            EventItem(
+                event_type=etype,
+                component=e.component,
+                trace_id=e.trace_id,
+                payload=e.payload,
+                duration_ms=e.duration_ms,
+                success=e.success,
+                timestamp=e.timestamp,
+            )
+        )
 
         if len(items) >= limit:
             break

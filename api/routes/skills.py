@@ -10,30 +10,34 @@ router = APIRouter(tags=["skills"])
 
 class SkillInfo(BaseModel):
     """Metadata for a registered skill."""
+
     name: str
     skill_schema: dict[str, Any]
 
 
 class SkillListResponse(BaseModel):
     """Response listing all registered skills."""
+
     skills: list[SkillInfo]
     count: int
 
 
 class SkillInvokeRequest(BaseModel):
     """Request body for invoking a skill."""
+
     arguments: dict[str, Any] = {}
     trace_id: str | None = None
 
 
 class SkillInvokeResponse(BaseModel):
     """Response from a skill invocation."""
+
     skill: str
     result: str
     success: bool
 
 
-def _get_executor(request: Request):
+def _get_executor(request: Request) -> Any:
     executor = getattr(request.app.state, "skill_executor", None)
     if executor is None:
         raise HTTPException(status_code=503, detail="SkillExecutor not configured")
@@ -72,7 +76,10 @@ async def invoke_skill(
     result = await executor.execute(name, body.arguments, trace_id=body.trace_id)
 
     # Determine success: executor returns error strings on failure
-    success = not (isinstance(result, str) and result.startswith(("Error:", "Timeout Error:", "Execution Error")))
+    success = not (
+        isinstance(result, str)
+        and result.startswith(("Error:", "Timeout Error:", "Execution Error"))
+    )
 
     return SkillInvokeResponse(
         skill=name,

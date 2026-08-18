@@ -8,6 +8,8 @@ import re
 import time
 from typing import Any, Optional
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 from core.telemetry import Event, EventBus, EventType
 from skills.local.meta import create_skill
 from skills.registry import SkillRegistry, _cosine_similarity
@@ -44,6 +46,20 @@ concurrency_safe: true ONLY if safe to run concurrently with itself.
 Default both to false when in doubt.
 
 If no skill needed: {{"should_create": false, "reason": "..."}}"""
+
+
+class SkillExtractionDecision(BaseModel):
+    """Strict schema for LLM skill-extraction decisions."""
+
+    should_create: bool
+    reason: str = ""
+    name: str = ""
+    description: str = ""
+    code: str = ""
+    is_read_only: bool = False
+    concurrency_safe: bool = False
+
+    model_config = ConfigDict(strict=True)
 
 
 class SkillExtractionTask:
@@ -122,21 +138,34 @@ class SkillExtractionTask:
             )
             return 0
 
-        if not parsed.get("should_create"):
+        try:
+            decision = SkillExtractionDecision.model_validate(parsed)
+        except ValidationError as exc:
+            logger.warning("SkillExtractionTask: invalid response schema: %s", exc)
             self._emit(
-                EventType.SKILL_EXTRACTION_SKIP,
+                EventType.SKILL_EXTRACTION_ERROR,
                 trace_id,
                 session_id=session_id,
-                reason=str(parsed.get("reason", "")),
+                error="invalid_schema",
                 duration_ms=(time.time() - start) * 1000,
             )
             return 0
 
-        name = str(parsed.get("name", "")).strip()
-        description = str(parsed.get("description", "")).strip()
-        code = str(parsed.get("code", "")).strip()
-        is_read_only = bool(parsed.get("is_read_only", False))
-        concurrency_safe = bool(parsed.get("concurrency_safe", False))
+        if not decision.should_create:
+            self._emit(
+                EventType.SKILL_EXTRACTION_SKIP,
+                trace_id,
+                session_id=session_id,
+                reason=decision.reason,
+                duration_ms=(time.time() - start) * 1000,
+            )
+            return 0
+
+        name = decision.name.strip()
+        description = decision.description.strip()
+        code = decision.code.strip()
+        is_read_only = decision.is_read_only
+        concurrency_safe = decision.concurrency_safe
 
         if not name or not description or not code:
             logger.warning("SkillExtractionTask: missing required fields in LLM response")
@@ -231,12 +260,14 @@ class SkillExtractionTask:
         """Emit telemetry without letting extraction failures affect the agent loop."""
         if self.event_bus is None:
             return
-        self.event_bus.emit_sync(Event(
-            event_type=event_type,
-            component="memory.skill_extractor",
-            trace_id=trace_id,
-            payload=dict(payload),
-        ))
+        self.event_bus.emit_sync(
+            Event(
+                event_type=event_type,
+                component="memory.skill_extractor",
+                trace_id=trace_id,
+                payload=dict(payload),
+            )
+        )
 
 
 def _parse_skill_extraction_response(content: str) -> dict[str, Any] | None:

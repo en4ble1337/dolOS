@@ -1,5 +1,5 @@
 import uuid
-from typing import Optional
+from typing import Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ def get_agent(request: Request) -> Agent:
     agent = getattr(request.app.state, "agent", None)
     if not agent:
         raise HTTPException(status_code=500, detail="Agent not configured")
-    return agent
+    return cast(Agent, agent)
 
 
 def get_event_bus(request: Request) -> EventBus:
@@ -33,7 +33,7 @@ def get_event_bus(request: Request) -> EventBus:
     bus = getattr(request.app.state, "event_bus", None)
     if not bus:
         raise HTTPException(status_code=500, detail="EventBus not configured")
-    return bus
+    return cast(EventBus, bus)
 
 
 def get_command_router(request: Request) -> Optional[CommandRouter]:

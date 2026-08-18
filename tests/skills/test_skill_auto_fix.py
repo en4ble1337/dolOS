@@ -22,12 +22,13 @@ import skills.executor as executor_module
 import skills.local.meta as meta_module
 from core.telemetry import EventBus, EventType
 from skills.executor import SkillExecutor
-from skills.local.meta import create_skill
+from skills.local.meta import create_skill, fix_skill
 from skills.registry import SkillRegistry, _default_registry
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def patch_dirs(tmp_path, monkeypatch):
@@ -66,6 +67,7 @@ def cleanup_sys_modules():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _simple_handler() -> str:
     """Returns trivial handler code that succeeds with no args."""
@@ -106,6 +108,7 @@ def mock_event_bus() -> EventBus:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_default_flags_are_false():
     """create_skill() must default is_read_only=False, concurrency_safe=False."""
@@ -119,6 +122,50 @@ async def test_default_flags_are_false():
     reg = _default_registry.get_registration("test_defaults")
     assert reg.is_read_only is False
     assert reg.concurrency_safe is False
+
+
+@pytest.mark.asyncio
+async def test_create_skill_rejects_path_traversal_name(patch_dirs):
+    """Generated skill names must not be able to escape generated/ via path syntax."""
+    gen_dir, staging_dir = patch_dirs
+    escaped_file = gen_dir.parent / "escape.py"
+
+    result = await create_skill(
+        name="../escape",
+        description="path traversal attempt",
+        code=_simple_handler(),
+    )
+
+    assert result.startswith("Error: Invalid generated skill name")
+    assert not escaped_file.exists()
+    assert not (gen_dir / "escape.py").exists()
+    assert not any(staging_dir.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_create_skill_rejects_non_snake_case_name():
+    """Generated skill names must match the documented snake_case contract."""
+    result = await create_skill(
+        name="Bad-Name",
+        description="invalid name",
+        code=_simple_handler(),
+    )
+
+    assert result.startswith("Error: Invalid generated skill name")
+    assert "Bad-Name" not in _default_registry.get_all_skill_names()
+
+
+@pytest.mark.asyncio
+async def test_fix_skill_rejects_path_traversal_name(patch_dirs):
+    """fix_skill must not read files outside generated/ from a crafted name."""
+    gen_dir, _ = patch_dirs
+    escaped_file = gen_dir.parent / "escape.py"
+    escaped_file.write_text("secret outside generated", encoding="utf-8")
+
+    result = await fix_skill("../escape")
+
+    assert result.startswith("Error: Invalid generated skill name")
+    assert "secret outside generated" not in result
 
 
 @pytest.mark.asyncio
@@ -268,9 +315,10 @@ async def test_built_in_skill_failure_does_not_trigger_auto_fix(mock_event_bus: 
     llm.generate = AsyncMock()
     executor = SkillExecutor(registry=reg, event_bus=mock_event_bus, llm=llm)
 
-    with patch.object(executor_module, "fix_skill", new=AsyncMock()) as fix_skill_mock, patch.object(
-        executor_module, "create_skill", new=AsyncMock()
-    ) as create_skill_mock:
+    with (
+        patch.object(executor_module, "fix_skill", new=AsyncMock()) as fix_skill_mock,
+        patch.object(executor_module, "create_skill", new=AsyncMock()) as create_skill_mock,
+    ):
         result = await executor.execute("broken_builtin", {}, trace_id="trace-built-in")
 
     assert "builtin boom" in result
@@ -314,9 +362,14 @@ async def test_generated_skill_timeout_triggers_auto_fix_attempt(mock_event_bus:
         )
         return "Skill 'generated_timeout' created and registered."
 
-    with patch.object(executor_module, "fix_skill", new=AsyncMock(return_value="old source")) as fix_skill_mock, patch.object(
-        executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
-    ) as create_skill_mock:
+    with (
+        patch.object(
+            executor_module, "fix_skill", new=AsyncMock(return_value="old source")
+        ) as fix_skill_mock,
+        patch.object(
+            executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
+        ) as create_skill_mock,
+    ):
         result = await executor.execute("generated_timeout", {}, trace_id="trace-timeout")
 
     assert result == "fixed timeout"
@@ -360,9 +413,14 @@ async def test_read_only_generated_skill_failure_reexecutes_after_fix(mock_event
         )
         return "Skill 'generated_read_only' created and registered."
 
-    with patch.object(executor_module, "fix_skill", new=AsyncMock(return_value="old source")) as fix_skill_mock, patch.object(
-        executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
-    ) as create_skill_mock:
+    with (
+        patch.object(
+            executor_module, "fix_skill", new=AsyncMock(return_value="old source")
+        ) as fix_skill_mock,
+        patch.object(
+            executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
+        ) as create_skill_mock,
+    ):
         result = await executor.execute("generated_read_only", {}, trace_id="trace-read-only")
 
     assert result == "fixed result"
@@ -408,9 +466,14 @@ async def test_mutating_generated_skill_failure_is_not_reexecuted(mock_event_bus
         )
         return "Skill 'generated_mutating' created and registered."
 
-    with patch.object(executor_module, "fix_skill", new=AsyncMock(return_value="old source")) as fix_skill_mock, patch.object(
-        executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
-    ) as create_skill_mock:
+    with (
+        patch.object(
+            executor_module, "fix_skill", new=AsyncMock(return_value="old source")
+        ) as fix_skill_mock,
+        patch.object(
+            executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
+        ) as create_skill_mock,
+    ):
         result = await executor.execute("generated_mutating", {}, trace_id="trace-mutating")
 
     assert "auto-fixed" in result.lower()
@@ -441,9 +504,12 @@ async def test_failed_auto_fix_returns_original_error_cleanly(mock_event_bus: Ev
     llm.generate = AsyncMock(side_effect=RuntimeError("llm boom"))
     executor = SkillExecutor(registry=reg, event_bus=mock_event_bus, llm=llm)
 
-    with patch.object(executor_module, "fix_skill", new=AsyncMock(return_value="old source")) as fix_skill_mock, patch.object(
-        executor_module, "create_skill", new=AsyncMock()
-    ) as create_skill_mock:
+    with (
+        patch.object(
+            executor_module, "fix_skill", new=AsyncMock(return_value="old source")
+        ) as fix_skill_mock,
+        patch.object(executor_module, "create_skill", new=AsyncMock()) as create_skill_mock,
+    ):
         result = await executor.execute("generated_fix_fail", {}, trace_id="trace-fix-fail")
 
     assert "original generated boom" in result
@@ -487,9 +553,14 @@ async def test_auto_fix_attempts_only_once_per_execution(mock_event_bus: EventBu
         )
         return "Skill 'generated_retry_guard' created and registered."
 
-    with patch.object(executor_module, "fix_skill", new=AsyncMock(return_value="old source")) as fix_skill_mock, patch.object(
-        executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
-    ) as create_skill_mock:
+    with (
+        patch.object(
+            executor_module, "fix_skill", new=AsyncMock(return_value="old source")
+        ) as fix_skill_mock,
+        patch.object(
+            executor_module, "create_skill", new=AsyncMock(side_effect=_rewrite)
+        ) as create_skill_mock,
+    ):
         result = await executor.execute("generated_retry_guard", {}, trace_id="trace-retry-guard")
 
     assert "still broken" in result

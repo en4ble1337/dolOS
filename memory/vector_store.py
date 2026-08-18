@@ -34,9 +34,9 @@ class VectorStore:
                 self.client = QdrantClient(path=location, **kwargs)
             except Exception as e:
                 logger.warning(
-                    "Qdrant storage at '%s' appears corrupted (%s). "
-                    "Resetting to fresh storage.",
-                    location, e,
+                    "Qdrant storage at '%s' appears corrupted (%s). " "Resetting to fresh storage.",
+                    location,
+                    e,
                 )
                 shutil.rmtree(location)
                 os.makedirs(location, exist_ok=True)
@@ -44,7 +44,9 @@ class VectorStore:
         else:
             self.client = QdrantClient(location=location, **kwargs)
 
-    def create_collection(self, collection_name: str, vector_size: int, distance: Distance = Distance.COSINE) -> None:
+    def create_collection(
+        self, collection_name: str, vector_size: int, distance: Distance = Distance.COSINE
+    ) -> None:
         """Create a new collection if it doesn't exist.
 
         Args:
@@ -63,12 +65,17 @@ class VectorStore:
         collections = self.client.get_collections().collections
         return any(c.name == collection_name for c in collections)
 
+    def count(self, collection_name: str) -> int:
+        """Return the number of points in a collection."""
+        result = self.client.count(collection_name=collection_name, exact=True)
+        return int(result.count or 0)
+
     def upsert(
         self,
         collection_name: str,
         vectors: List[List[float]],
         payloads: List[Dict[str, Any]],
-        ids: Optional[Sequence[str | int]] = None
+        ids: Optional[Sequence[str | int]] = None,
     ) -> None:
         """Upsert vectors and payloads into a collection.
 
@@ -81,25 +88,16 @@ class VectorStore:
         points = []
         for i, vector in enumerate(vectors):
             point_id = ids[i] if ids else i
-            points.append(
-                PointStruct(
-                    id=point_id,
-                    vector=vector,
-                    payload=payloads[i]
-                )
-            )
+            points.append(PointStruct(id=point_id, vector=vector, payload=payloads[i]))
 
-        self.client.upsert(
-            collection_name=collection_name,
-            points=points
-        )
+        self.client.upsert(collection_name=collection_name, points=points)
 
     def query(
         self,
         collection_name: str,
         query_vector: List[float],
         limit: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Any]:
         """Search for similar vectors.
 
@@ -126,20 +124,23 @@ class VectorStore:
                 collection_name=collection_name,
                 query=query_vector,
                 limit=limit,
-                query_filter=query_filter
+                query_filter=query_filter,
             )
             return cast(List[Any], response.points)
 
         # Fallback for older versions if search exists
         search_func = getattr(self.client, "search", None)
         if search_func:
-            return cast(List[Any], search_func(
-                collection_name=collection_name,
-                query_vector=query_vector,
-                limit=limit,
-                query_filter=query_filter
-            ))
-        
+            return cast(
+                List[Any],
+                search_func(
+                    collection_name=collection_name,
+                    query_vector=query_vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                ),
+            )
+
         return []
 
     def delete_by_filter(

@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -68,7 +69,9 @@ logging.basicConfig(
 )
 os.makedirs("data", exist_ok=True)
 _file_handler = logging.FileHandler("data/agent.log")
-_file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
 logging.getLogger().addHandler(_file_handler)
 logger = logging.getLogger("main")
 
@@ -84,6 +87,7 @@ _args, _ = _parser.parse_known_args()
 
 if _args.mcp:
     from tools.mcp_server import MCPServerRunner
+
     logger.info("Starting dolOS in MCP server mode (stdio)")
     asyncio.run(MCPServerRunner(registry).run())
     sys.exit(0)
@@ -93,7 +97,9 @@ if _args.mcp:
 event_bus = EventBus()
 collector = EventCollector(event_bus, "agent.db")
 llm = LLMGateway(settings=settings, event_bus=event_bus)
-logger.info("Initializing Memory Manager & Downloading Embedding Models (this may take ~1 minute on first run)...")
+logger.info(
+    "Initializing Memory Manager & Downloading Embedding Models (this may take ~1 minute on first run)..."
+)
 vector_store = VectorStore(location=settings.data_dir)
 memory = MemoryManager(
     vector_store=vector_store,
@@ -116,29 +122,45 @@ session_kv = _get_session_kv()
 transcript_store = TranscriptStore(transcript_index=transcript_index)
 hook_registry = HookRegistry()
 plan_mode_state = PlanModeState()
-semantic_extractor = SemanticExtractor(
-    llm=llm,
-    memory=memory,
-    event_bus=event_bus,
-    similarity_threshold=settings.semantic_similarity_threshold,
-) if settings.semantic_extraction_enabled else None
-summarizer = ConversationSummarizer(
-    llm=llm,
-    memory=memory,
-    event_bus=event_bus,
-    turn_threshold=settings.summarization_turn_threshold,
-) if settings.summarization_enabled else None
-lesson_extractor = LessonExtractor(
-    llm=llm,
-    memory=memory,
-    event_bus=event_bus,
-) if settings.lesson_extraction_enabled else None
-combined_extractor = CombinedTurnExtractor(
-    llm=llm,
-    semantic_extractor=semantic_extractor,
-    lesson_extractor=lesson_extractor,
-    event_bus=event_bus,
-) if (semantic_extractor is not None and lesson_extractor is not None) else None
+semantic_extractor = (
+    SemanticExtractor(
+        llm=llm,
+        memory=memory,
+        event_bus=event_bus,
+        similarity_threshold=settings.semantic_similarity_threshold,
+    )
+    if settings.semantic_extraction_enabled
+    else None
+)
+summarizer = (
+    ConversationSummarizer(
+        llm=llm,
+        memory=memory,
+        event_bus=event_bus,
+        turn_threshold=settings.summarization_turn_threshold,
+    )
+    if settings.summarization_enabled
+    else None
+)
+lesson_extractor = (
+    LessonExtractor(
+        llm=llm,
+        memory=memory,
+        event_bus=event_bus,
+    )
+    if settings.lesson_extraction_enabled
+    else None
+)
+combined_extractor = (
+    CombinedTurnExtractor(
+        llm=llm,
+        semantic_extractor=semantic_extractor,
+        lesson_extractor=lesson_extractor,
+        event_bus=event_bus,
+    )
+    if (semantic_extractor is not None and lesson_extractor is not None)
+    else None
+)
 skill_extractor = SkillExtractionTask(llm=llm, registry=registry, event_bus=event_bus)
 user_profile_extractor = UserProfileExtractor(
     llm=llm,
@@ -177,7 +199,7 @@ terminal = TerminalChannel(agent, event_bus)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Initializing Agent Backend...")
 
     # Start Event Collector
@@ -307,12 +329,16 @@ async def main() -> None:
 
     # Start Telegram if configured
     if settings.telegram_bot_token:
-        telegram_channel = TelegramChannel(agent, event_bus, settings.telegram_bot_token.get_secret_value())
+        telegram_channel = TelegramChannel(
+            agent, event_bus, settings.telegram_bot_token.get_secret_value()
+        )
         background_tasks.append(asyncio.create_task(telegram_channel.start()))
 
     # Start Discord if configured
     if settings.discord_bot_token:
-        discord_channel = DiscordChannel(agent, event_bus, settings.discord_bot_token.get_secret_value())
+        discord_channel = DiscordChannel(
+            agent, event_bus, settings.discord_bot_token.get_secret_value()
+        )
         background_tasks.append(asyncio.create_task(discord_channel.start()))
 
     if sys.stdin.isatty():

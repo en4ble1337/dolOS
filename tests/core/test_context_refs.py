@@ -1,13 +1,9 @@
 """Tests for @-syntax context reference expansion (Gap H4)."""
 
-import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from core.context_refs import expand_refs, _is_sensitive, _parse_file_arg
+from core.context_refs import _is_sensitive, _parse_file_arg, expand_refs
 
 
 class TestIsSensitive:
@@ -106,6 +102,28 @@ class TestExpandRefs:
         result = expand_refs("@folder:.ssh/")
         assert "blocked" in result
 
+    def test_folder_expansion_stops_during_traversal(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        folder = Path("folder")
+        folder.mkdir()
+        (folder / "a.txt").write_text("A" * 80)
+        (folder / "b.txt").write_text("B" * 80)
+        (folder / "c.txt").write_text("C" * 80)
+
+        result = expand_refs("@folder:folder", context_window=600)
+
+        assert "A" * 20 in result
+        assert "B" * 20 not in result
+        assert "folder expansion stopped" in result
+
+    def test_expanded_refs_are_marked_untrusted(self, tmp_path: Path):
+        f = tmp_path / "hello.txt"
+        f.write_text("hello")
+
+        result = expand_refs(f"@file:{f}")
+
+        assert "BEGIN UNTRUSTED DATA" in result
+
     # --- @diff / @staged ---
 
     def test_diff_calls_git(self):
@@ -151,13 +169,16 @@ class TestExpandRefs:
     def test_url_fetch(self):
         with patch("core.context_refs.urllib.request.urlopen") as mock_open:
             mock_cm = MagicMock()
-            mock_cm.__enter__ = MagicMock(return_value=MagicMock(
-                read=MagicMock(return_value=b"<html><body>Hello page</body></html>")
-            ))
+            mock_cm.__enter__ = MagicMock(
+                return_value=MagicMock(
+                    read=MagicMock(return_value=b"<html><body>Hello page</body></html>")
+                )
+            )
             mock_cm.__exit__ = MagicMock(return_value=False)
             mock_open.return_value = mock_cm
             result = expand_refs("@url:https://example.com")
         assert "Hello page" in result
+        assert "BEGIN UNTRUSTED DATA" in result
 
     # --- Limits ---
 

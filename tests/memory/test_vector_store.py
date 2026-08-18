@@ -51,18 +51,25 @@ def test_upsert_and_query(vector_store: VectorStore) -> None:
     assert results[0].score > 0.9  # Should be high similarity
 
 
+def test_count_returns_collection_point_count(vector_store: VectorStore) -> None:
+    collection_name = "test_count"
+    vector_store.create_collection(collection_name, 3)
+    vector_store.upsert(
+        collection_name,
+        vectors=[[0.1, 0.2, 0.3], [0.2, 0.3, 0.4]],
+        payloads=[{"id": "doc1"}, {"id": "doc2"}],
+        ids=[1, 2],
+    )
+
+    assert vector_store.count(collection_name) == 2
+
+
 def test_query_with_metadata_filter(vector_store: VectorStore) -> None:
     collection_name = "test_filters"
     vector_store.create_collection(collection_name, 3)
 
-    vectors = [
-        [0.1, 0.2, 0.3],
-        [0.2, 0.3, 0.4]
-    ]
-    payloads = [
-        {"id": "doc1", "category": "A"},
-        {"id": "doc2", "category": "B"}
-    ]
+    vectors = [[0.1, 0.2, 0.3], [0.2, 0.3, 0.4]]
+    payloads = [{"id": "doc1", "category": "A"}, {"id": "doc2", "category": "B"}]
     ids: Any = [1, 2]
 
     vector_store.upsert(collection_name, vectors, payloads, ids)
@@ -72,10 +79,7 @@ def test_query_with_metadata_filter(vector_store: VectorStore) -> None:
 
     # We want to match only category B
     results = vector_store.query(
-        collection_name,
-        query_vector,
-        limit=10,
-        filter_metadata={"category": "B"}
+        collection_name, query_vector, limit=10, filter_metadata={"category": "B"}
     )
 
     assert len(results) == 1
@@ -88,8 +92,8 @@ def test_delete_by_filter_removes_old_low_importance(vector_store: VectorStore) 
     vector_store.create_collection(collection_name, 3)
 
     now = time.time()
-    old_ts = now - 10_000   # well in the past
-    recent_ts = now          # right now
+    old_ts = now - 10_000  # well in the past
+    recent_ts = now  # right now
 
     # Point 1: old + low importance  → should be deleted
     # Point 2: old + high importance → should remain

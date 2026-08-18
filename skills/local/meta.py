@@ -1,9 +1,11 @@
 """Meta-skills that allow the agent to extend its own capabilities."""
+
 import ast
 import asyncio
 import importlib
 import importlib.util
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 _GENERATED_DIR = Path(__file__).parent / "generated"
 _STAGING_DIR = _GENERATED_DIR / "staging"
+_SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _validate_generated_skill_name(name: str) -> str | None:
+    """Return an error string when a generated skill name is not safe."""
+    if not _SKILL_NAME_RE.fullmatch(name):
+        return "Error: Invalid generated skill name. Use snake_case matching " "^[a-z][a-z0-9_]*$."
+    return None
 
 
 @skill(
@@ -54,6 +64,10 @@ async def create_skill(
     Returns:
         Confirmation message with the registered skill name, or an error description.
     """
+    name_error = _validate_generated_skill_name(name)
+    if name_error:
+        return name_error
+
     _GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
     # Build the full live file content (used for both validation and final write)
@@ -78,8 +92,7 @@ async def create_skill(
 
     # 2. Structure check: the code must define an async function named 'handler'
     has_handler = any(
-        isinstance(node, ast.AsyncFunctionDef) and node.name == "handler"
-        for node in ast.walk(tree)
+        isinstance(node, ast.AsyncFunctionDef) and node.name == "handler" for node in ast.walk(tree)
     )
     if not has_handler:
         return "Error: Generated code must contain an async function named 'handler'."
@@ -100,9 +113,7 @@ async def create_skill(
 
         staging_module_name = f"_dolOS_staging_{name}"
         try:
-            staging_spec = importlib.util.spec_from_file_location(
-                staging_module_name, staging_file
-            )
+            staging_spec = importlib.util.spec_from_file_location(staging_module_name, staging_file)
             if staging_spec is None or staging_spec.loader is None:
                 return f"Error: Could not load staging file at {staging_file}"
 
@@ -127,9 +138,7 @@ async def create_skill(
         except Exception as exc:
             sys.modules.pop(staging_module_name, None)
             err_type = type(exc).__name__
-            logger.error(
-                "Skill quarantine failed for '%s' (%s): %s", name, err_type, exc
-            )
+            logger.error("Skill quarantine failed for '%s' (%s): %s", name, err_type, exc)
             return (
                 f"Error: Skill quarantine failed ({err_type}) — {exc}\n"
                 f"Skill source remains in staging at {staging_file} for diagnosis."
@@ -187,6 +196,10 @@ async def fix_skill(name: str) -> str:
     Returns:
         The full Python source of the skill file, or an error message if not found.
     """
+    name_error = _validate_generated_skill_name(name)
+    if name_error:
+        return name_error
+
     skill_file = _GENERATED_DIR / f"{name}.py"
     if not skill_file.exists():
         return (

@@ -1,6 +1,6 @@
 """FastAPI routes for the observability layer (REST + WebSocket)."""
 
-from typing import List
+from typing import Any, List
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -14,14 +14,14 @@ _collector: EventCollector | None = None
 
 
 # For testing / global initialization
-def set_collector(collector: EventCollector):
+def set_collector(collector: EventCollector) -> None:
     global _collector
     _collector = collector
     if _collector:
         _collector.add_callback(broadcast_event)
 
 
-async def broadcast_event(event: Event):
+async def broadcast_event(event: Event) -> None:
     """Callback to broadcast new events to all connected WebSocket clients."""
     await manager.broadcast(
         {
@@ -46,14 +46,14 @@ class EventResponse(BaseModel):
     event_type: str
     component: str
     trace_id: str
-    payload: dict
+    payload: dict[str, Any]
     duration_ms: float
     success: bool
     timestamp: float
 
 
 @router.get("/events/recent", response_model=List[EventResponse])
-async def get_recent_events(limit: int = 100):
+async def get_recent_events(limit: int = 100) -> list[EventResponse]:
     """Return the last 'limit' events from the in-memory ring buffer."""
     if _collector is None:
         return []
@@ -74,7 +74,7 @@ async def get_recent_events(limit: int = 100):
 
 
 @router.websocket("/events/live")
-async def websocket_events_live(websocket: WebSocket):
+async def websocket_events_live(websocket: WebSocket) -> None:
     """Stream live events to the connected client."""
     await manager.connect(websocket)
     try:

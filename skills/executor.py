@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from core.telemetry import Event, EventBus, EventType
-from skills.local.meta import create_skill, fix_skill
+from skills.local.meta import _validate_generated_skill_name, create_skill, fix_skill
 from skills.registry import SkillRegistry
 
 if TYPE_CHECKING:
@@ -286,6 +286,8 @@ class SkillExecutor:
 
     def _is_generated_skill(self, name: str) -> bool:
         """Return True when the skill corresponds to a file in generated/."""
+        if _validate_generated_skill_name(name):
+            return False
         return (_GENERATED_DIR / f"{name}.py").exists()
 
     def _generated_skill_hint(self, name: str) -> str:

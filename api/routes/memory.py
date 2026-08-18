@@ -10,6 +10,7 @@ router = APIRouter(tags=["memory"])
 
 class MemorySearchResult(BaseModel):
     """Single memory search result."""
+
     text: str
     score: float
     timestamp: float
@@ -20,6 +21,7 @@ class MemorySearchResult(BaseModel):
 
 class MemorySearchResponse(BaseModel):
     """Response for memory search queries."""
+
     query: str
     results: list[MemorySearchResult]
     count: int
@@ -27,10 +29,11 @@ class MemorySearchResponse(BaseModel):
 
 class MemoryStatsResponse(BaseModel):
     """Memory collection statistics."""
+
     collections: dict[str, Any]
 
 
-def _get_memory(request: Request):
+def _get_memory(request: Request) -> Any:
     memory = getattr(request.app.state, "memory", None)
     if memory is None:
         raise HTTPException(status_code=503, detail="MemoryManager not configured")

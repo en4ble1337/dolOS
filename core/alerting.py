@@ -48,6 +48,8 @@ class AlertNotifier:
             logger.warning("AlertNotifier: no targets configured, alert not sent: %s", message)
 
     async def _send_telegram(self, message: str) -> None:
+        if Bot is None or self._telegram_token is None or self._telegram_chat_id is None:
+            return
         try:
             bot = Bot(token=self._telegram_token.get_secret_value())
             await bot.send_message(chat_id=self._telegram_chat_id, text=message)
@@ -55,6 +57,8 @@ class AlertNotifier:
             logger.error("AlertNotifier: Telegram send failed: %s", e)
 
     async def _send_discord(self, message: str) -> None:
+        if aiohttp is None or self._discord_webhook_url is None:
+            return
         try:
             async with aiohttp.ClientSession() as session:
                 await session.post(
@@ -66,7 +70,4 @@ class AlertNotifier:
 
     def is_configured(self) -> bool:
         """True if at least one alert target is configured."""
-        return bool(
-            (self._telegram_token and self._telegram_chat_id)
-            or self._discord_webhook_url
-        )
+        return bool((self._telegram_token and self._telegram_chat_id) or self._discord_webhook_url)

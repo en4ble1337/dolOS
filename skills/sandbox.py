@@ -22,7 +22,6 @@ from typing import Any
 from core.telemetry import Event, EventBus, EventType
 from skills.bash_validator import validate_bash_command
 
-
 # Maximum output length to protect LLM context windows
 DEFAULT_MAX_OUTPUT_LENGTH = 4000
 DEFAULT_TIMEOUT = 30.0
@@ -274,9 +273,7 @@ class SandboxExecutor:
                 "success": False,
             }
 
-    async def _run_sandboxed_command(
-        self, command: str, policy: SandboxPolicy
-    ) -> dict[str, Any]:
+    async def _run_sandboxed_command(self, command: str, policy: SandboxPolicy) -> dict[str, Any]:
         """Run a shell command in a subprocess with sandbox constraints."""
         env = self._build_sandbox_env(policy)
 
@@ -334,9 +331,7 @@ class SandboxExecutor:
                 "success": False,
             }
 
-    async def _run_sandboxed_code(
-        self, code: str, policy: SandboxPolicy
-    ) -> dict[str, Any]:
+    async def _run_sandboxed_code(self, code: str, policy: SandboxPolicy) -> dict[str, Any]:
         """Run Python code in a subprocess with sandbox constraints.
 
         Builds a wrapper script that enforces path restrictions and network
@@ -407,7 +402,7 @@ class SandboxExecutor:
         # Inject sandbox configuration as environment variables
         if policy.allowed_paths:
             env["SANDBOX_ALLOWED_PATHS"] = json.dumps(
-                [str(Path(p).absolute()) for p in policy.allowed_paths]
+                [str(Path(p).resolve()) for p in policy.allowed_paths]
             )
         else:
             env["SANDBOX_ALLOWED_PATHS"] = "[]"
@@ -436,15 +431,13 @@ class SandboxExecutor:
         2. Blocks socket creation if network is not allowed
         3. Executes the user code
         """
-        allowed_paths_json = json.dumps(
-            [str(Path(p).absolute()) for p in policy.allowed_paths]
-        )
+        allowed_paths_json = json.dumps([str(Path(p).resolve()) for p in policy.allowed_paths])
 
         wrapper = textwrap.dedent(f"""\
             import os, sys, json
 
             # --- Sandbox enforcement ---
-            _allowed_paths = json.loads('''{allowed_paths_json}''')
+            _allowed_paths = json.loads({allowed_paths_json!r})
             _allow_network = {policy.allow_network!r}
 
             # Path restriction: override builtins.open to check paths
@@ -457,10 +450,13 @@ class SandboxExecutor:
                     if isinstance(file, int):
                         return _original_open(file, mode, *args, **kwargs)
                     from pathlib import Path as _Path
-                    resolved = str(_Path(file).absolute())
+                    resolved = _Path(file).resolve()
                     for allowed in _allowed_paths:
-                        if resolved.startswith(allowed):
-                            return _original_open(file, mode, *args, **kwargs)
+                        try:
+                            if resolved.is_relative_to(_Path(allowed).resolve()):
+                                return _original_open(file, mode, *args, **kwargs)
+                        except (OSError, ValueError):
+                            continue
                     raise PermissionError(
                         f"Sandbox: Access denied to '{{file}}'. "
                         f"Allowed paths: {{_allowed_paths}}"
@@ -509,9 +505,9 @@ def validate_path_access(path: str, allowed_paths: list[str]) -> bool:
     if not allowed_paths:
         return True  # No restrictions means all paths are allowed
 
-    target = Path(path).absolute()
+    target = Path(path).resolve()
     for allowed in allowed_paths:
-        allowed_dir = Path(allowed).absolute()
+        allowed_dir = Path(allowed).resolve()
         try:
             if target.is_relative_to(allowed_dir):
                 return True
